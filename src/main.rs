@@ -1,11 +1,10 @@
-use crossterm::Result;
 
 pub mod editor;
+mod client;
 
 
-fn main() -> Result<()> {
-    let mut ed = editor::Editor::new();
-    ed.run().expect("Something crashed");
-    Ok(())
+fn main(){
+    let mut ed = client::Client::new();
+    let _ = ed.run().map_err( |err| {eprintln!("{:?}", err)});
 }
 
