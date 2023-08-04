@@ -13,6 +13,7 @@ const DEFAULT_PADDING:usize = 3;
 pub struct EditorFlags{
     quit : bool,
     recompute : bool,
+    refresh : bool,
 }
 
 impl EditorFlags{
@@ -20,6 +21,7 @@ impl EditorFlags{
         EditorFlags{
             quit : false,
             recompute : true,
+            refresh : true,
         }
     }
 }
@@ -37,15 +39,17 @@ pub struct Client{
     output : Stdout,
     window_dimensions : (u16,u16),
     window_offset : usize,
+    text_dimensions : (u16,u16),
 }
 
 impl Drop for Client{
     fn drop(&mut self) {
         disable_raw_mode().unwrap();
-        // execute!(self.output, terminal::Clear(terminal::ClearType::All)).unwrap();
-        self.editor.lines.iter().for_each(|line|println!("{:?}",line));
-        println!("index {:?}", self.editor.cursor_index);
-        println!("buffer len {:?}", self.editor.get_buffer().len());
+        execute!(self.output, terminal::Clear(terminal::ClearType::All)).unwrap();
+        execute!(self.output, terminal::LeaveAlternateScreen).unwrap();
+        // self.editor.lines.iter().for_each(|line|println!("{:?}",line));
+        // println!("index {:?}", self.editor.cursor_index);
+        // println!("buffer len {:?}", self.editor.get_buffer().len());
         // println!("{:?}", self.editor.lines);
         // println!("{:?}", self.editor.cursor_index);
         // println!("{:?}", self.window_offset);
@@ -55,7 +59,6 @@ impl Drop for Client{
         //     println!("{:?}", line);
         // }
         // );
-        // execute!(self.output, terminal::LeaveAlternateScreen).unwrap();
     }
 
 }
@@ -63,14 +66,17 @@ impl Drop for Client{
 impl Client{
 
     pub fn new() -> Self{
+        let status_bar_size = 1;
+        let size = size().unwrap_or((0,0));
         Self{
             content : String::new(),
             cursor : Cursor{x : 0, y : 0},
             editor : Editor::new(),
             flags : EditorFlags::new(),
             output : stdout(),
-            window_dimensions : size().unwrap_or((0,0)),
+            window_dimensions : size,
             window_offset : 0,
+            text_dimensions: (size.0, size.1 - status_bar_size),
         }
     }
 
@@ -96,8 +102,8 @@ impl Client{
         let left_padding = std::cmp::max(DEFAULT_PADDING,util::digits(self.editor.lines.len()));
 
         self.window_offset = std::cmp::min(self.window_offset,row);
-        if row >= self.window_offset + self.window_dimensions.1 as usize{
-            self.window_offset = row as usize - self.window_dimensions.1 as usize + 1;
+        if row >= self.window_offset + self.text_dimensions.1 as usize{
+            self.window_offset = row as usize - self.text_dimensions.1 as usize + 1;
         }
         //For now we offset collumns by 2
         // let right_padding = util::digits(row)+1;
@@ -123,15 +129,15 @@ impl Client{
         
         let left_padding = std::cmp::max(DEFAULT_PADDING,util::digits(self.editor.lines.len()));
         
-        let rows = self.window_dimensions.1 as usize;
+        let rows = self.text_dimensions.1 as usize;
         for i in 0..rows{
             let current_size = util::digits(i + self.window_offset+1);
             let idx = i + self.window_offset;
             if idx >= self.editor.lines.len(){
                 result.push('~');
-                if i < rows-1 {
+                // if i < rows-1 {
                     result.push_str("\r\n");
-                }
+                // }
                 continue;
             }
 
@@ -146,15 +152,15 @@ impl Client{
                 if character != '\n'{
                     to_append.push(character);
                 }
-                if i < rows-1 {
+                // if i < rows-1 {
                     to_append.push('\r');
                     to_append.push('\n');
-                }
+                // }
             }
             else{
-                if i < rows-1{
+                // if i < rows-1{
                     to_append.push_str("\r\n");
-                }
+                // }
             }
             result.push_str(&to_append);
         }
@@ -163,7 +169,7 @@ impl Client{
     fn update(&mut self) -> Result<()>{
         // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
         if self.should_recompute() {
-            self.editor.lines = self.editor.compute_lines();
+            self.editor.compute_lines();
             //this needs to be better implemented later
             // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
             self.move_cursor_to_index();
@@ -174,6 +180,7 @@ impl Client{
             queue!(self.output, cursor::MoveTo(0,0))?;
 
             queue!(self.output, style::Print(&self.content))?;
+            queue!(self.output, style::Print(&self.editor.get_status()))?;
             self.output.flush()?;
 
             // queue!(self.output, cursor::RestorePosition)?;
@@ -246,6 +253,8 @@ impl Client{
                 modifiers : KeyModifiers::CONTROL
             } =>{
                     self.editor.save_file();
+                    //temporary
+                    self.flags.recompute = true;
                 }
             _ => ()
         }
@@ -263,7 +272,7 @@ impl Client{
         Ok(())
     }
     pub fn run(&mut self) -> Result<()>{
-        // execute!(self.output, terminal::EnterAlternateScreen)?;
+        execute!(self.output, terminal::EnterAlternateScreen)?;
         enable_raw_mode()?;
         while !self.should_quit(){
             self.update()?;

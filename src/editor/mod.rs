@@ -8,6 +8,7 @@ pub struct Editor{
     buffer_path : String,
     pub cursor_index : usize,
     pub lines : Vec<Line>,
+    write_info : (bool,usize, usize),
 }
 
 impl Editor{
@@ -18,6 +19,7 @@ impl Editor{
             cursor_index : 0,
             buffer : String::from(_initial_text),
             buffer_path : String::new(),
+            write_info : (false,_initial_text.len(), 3),
         }
     }
 
@@ -25,14 +27,34 @@ impl Editor{
         let buff = fs::read_to_string(path).unwrap();
         self.buffer_path = String::from(path);
         self.buffer = buff;
+        self.compute_lines();
+        self.write_info = (false, self.buffer.len(),self.lines.len());
     }
 
     pub fn get_cursor_line(&self) -> Option<(usize, &Line)>{
         self.lines.iter().enumerate().find(|line| self.cursor_index >=line.1.start && self.cursor_index <= line.1.end)
     }
-    pub fn compute_lines(&mut self) -> Vec<Line>{
-       Line::compute_lines(&self.buffer)
+
+    pub fn compute_lines(&mut self){
+        let mut result = Vec::new();
+        let values = self.buffer.chars();
+        let mut start = 0;
+        let mut end = 0;
+        for c in values{
+            if c == '\n'{
+                result.push(Line::new(start,end));
+                start = end+1;
+                end = start;
+                continue;
+            }
+            end += 1;
+        }
+        result.push(Line::new(start,end));
+        self.lines = result;
     }
+    // pub fn compute_lines(&mut self) -> Vec<Line>{
+    //    Line::compute_lines(&self.buffer)
+    // }
 
     pub fn get_buffer(&self) -> String{
         self.buffer.to_owned()
@@ -103,8 +125,18 @@ impl Editor{
         }
     }
 
-    pub fn save_file(&self){
+    pub fn save_file(&mut self){
         fs::write(&self.buffer_path, &self.buffer).unwrap();
+        self.write_info = (true, self.buffer.len(),self.lines.len());
+    }
+
+    pub fn get_status(&self) -> String{
+        if !self.write_info.0{
+            return format!("\"{}\" {}L {}B", &self.buffer_path, &self.write_info.2,&self.write_info.1);
+        }
+        else{
+            return format!("saved \"{}\" {}L {}B written", &self.buffer_path,  &self.write_info.2,&self.write_info.1);
+        }
     }
 
 }

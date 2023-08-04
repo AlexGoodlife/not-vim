@@ -15,7 +15,7 @@ impl Line{
             size: (end_index - start_index)+1,
         }
     }
-    pub fn compute_lines(buffer: &str ) -> Vec<Line>{
+    pub fn compute_lines(buffer: &str) -> Vec<Line>{
         let mut result = Vec::new();
         let values = buffer.chars();
         let mut start = 0;
