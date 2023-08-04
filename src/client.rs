@@ -6,7 +6,9 @@ use event::{read, poll,Event};
 use crossterm::{ execute, terminal, terminal::enable_raw_mode, terminal::disable_raw_mode,Result, style,event, queue, cursor,terminal::size
 };
 use crate::editor::Editor;
-use crate::editor::line::Line;
+use crate::util;
+
+const DEFAULT_PADDING:usize = 3;
 
 pub struct EditorFlags{
     quit : bool,
@@ -27,26 +29,6 @@ struct Cursor{
     pub y : u16,
 }
 
-impl Cursor{
-    pub fn move_to_index(&mut self, lines: &Vec<Line>, index: usize, window_x : usize, window_y : usize, offset: &mut usize){
-        let default_line = Line::new(0,0);
-        let current_line = lines.iter().enumerate().find(|line| index >=line.1.start && index <= line.1.end).unwrap_or((0, &default_line));
-        let row = current_line.0;
-        let mut collumn =  index - current_line.1.start ;
-
-        *offset = std::cmp::min(*offset,row);
-        if row >= *offset + window_y{
-            *offset = row as usize - window_y as usize + 1;
-        }
-        //For now we offset collumns by 2
-        collumn += 2;
-        self.x = collumn as u16;
-        // self.y = 0 as u16;
-        self.y = (row as usize - *offset as usize) as u16;
-    }
-    
-}
-
 pub struct Client{
     content : String,
     cursor : Cursor,
@@ -60,8 +42,13 @@ pub struct Client{
 impl Drop for Client{
     fn drop(&mut self) {
         disable_raw_mode().unwrap();
-        execute!(self.output, terminal::Clear(terminal::ClearType::All)).unwrap();
-        println!("{:?}", self.window_offset);
+        // execute!(self.output, terminal::Clear(terminal::ClearType::All)).unwrap();
+        self.editor.lines.iter().for_each(|line|println!("{:?}",line));
+        println!("index {:?}", self.editor.cursor_index);
+        println!("buffer len {:?}", self.editor.get_buffer().len());
+        // println!("{:?}", self.editor.lines);
+        // println!("{:?}", self.editor.cursor_index);
+        // println!("{:?}", self.window_offset);
         // println!("{:?}", self.editor.lines.len());
         // self.editor.lines.iter().enumerate().for_each(|(i,line)| {
         //     print!("{} ", i);
@@ -87,6 +74,10 @@ impl Client{
         }
     }
 
+    pub fn open_file(&mut self, path: &str){
+        self.editor.open_file(path);
+    }
+
     fn should_quit(&self) -> bool{
         self.flags.quit
     }
@@ -95,21 +86,27 @@ impl Client{
         self.flags.recompute
     }
 
-    // fn get_content(&mut self) -> String{
-    //     let mut result = String::new();
-    //     let mut i = 1;
-    //     let buffer = self.editor.get_buffer();
-    //     for line in &self.editor.lines{
-    //         result.push_str(&i.to_string());
-    //         result.push(' ');
-    //         let to_append = buffer.chars().skip(line.start).take(line.size).collect::<String>();
-    //         // println!("{:?}", to_append);
-    //         result.push_str(&to_append);
-    //         result.push('\r');
-    //         i += 1;
-    //     }
-    //     result
-    // }
+    fn move_cursor_to_index(&mut self){
+        let index = self.editor.cursor_index;
+        // let current_line = self.editor.lines.iter().enumerate().find(|line| index >=line.1.start && index <= line.1.end).unwrap();
+        let current_line = self.editor.get_cursor_line().unwrap();
+        let row = current_line.0;
+        let mut collumn = std::cmp::max(0,index - current_line.1.start);
+
+        let left_padding = std::cmp::max(DEFAULT_PADDING,util::digits(self.editor.lines.len()));
+
+        self.window_offset = std::cmp::min(self.window_offset,row);
+        if row >= self.window_offset + self.window_dimensions.1 as usize{
+            self.window_offset = row as usize - self.window_dimensions.1 as usize + 1;
+        }
+        //For now we offset collumns by 2
+        // let right_padding = util::digits(row)+1;
+        let right_padding = 1;
+        collumn += left_padding + right_padding;
+        self.cursor.x = collumn as u16;
+        // self.y = 0 as u16;
+        self.cursor.y = (row as usize - self.window_offset as usize) as u16;
+    }
 
     fn move_cursor(&self) -> Result<()>{
         queue!(&self.output, cursor::MoveTo(self.cursor.x, self.cursor.y))?;
@@ -124,17 +121,22 @@ impl Client{
         //old version, dont take out
         // let rows = std::cmp::min(self.window_dimensions.1 as usize, self.editor.lines.len()-self.window_offset);
         
+        let left_padding = std::cmp::max(DEFAULT_PADDING,util::digits(self.editor.lines.len()));
+        
         let rows = self.window_dimensions.1 as usize;
         for i in 0..rows{
+            let current_size = util::digits(i + self.window_offset+1);
             let idx = i + self.window_offset;
             if idx >= self.editor.lines.len(){
-                if i < rows-1{
-                    result.push_str("~\r\n");
-                }
-                else{
-                    result.push('~');
+                result.push('~');
+                if i < rows-1 {
+                    result.push_str("\r\n");
                 }
                 continue;
+            }
+
+            for _pad in 0..(left_padding - current_size){
+                result.push(' ');
             }
             result.push_str(&(idx+1).to_string());
             result.push(' ');
@@ -149,32 +151,42 @@ impl Client{
                     to_append.push('\n');
                 }
             }
+            else{
+                if i < rows-1{
+                    to_append.push_str("\r\n");
+                }
+            }
             result.push_str(&to_append);
         }
     }
 
     fn update(&mut self) -> Result<()>{
-        let (window_x, window_y) = size().unwrap_or((0,0));
-        self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
-        self.move_cursor()?;
+        // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
         if self.should_recompute() {
             self.editor.lines = self.editor.compute_lines();
-
             //this needs to be better implemented later
-            self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
+            // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
+            self.move_cursor_to_index();
             self.get_content();
             queue!(self.output, terminal::Clear(terminal::ClearType::All))?;
             // queue!(self.output, cursor::SavePosition)?;
-            queue!(self.output, cursor::MoveTo(0,0))?;
             queue!(self.output, cursor::Hide)?;
+            queue!(self.output, cursor::MoveTo(0,0))?;
 
             queue!(self.output, style::Print(&self.content))?;
+            self.output.flush()?;
 
             // queue!(self.output, cursor::RestorePosition)?;
             queue!(self.output, crossterm::cursor::Show)?;
             self.flags.recompute = false;
-            self.output.flush()?;
         }
+        let old_offset = self.window_offset.clone();
+        self.move_cursor_to_index();
+        if old_offset != self.window_offset{
+            self.flags.recompute = true;
+        }
+        self.move_cursor()?;
+        self.output.flush()?;
         Ok(())
     }
 
@@ -205,13 +217,43 @@ impl Client{
                     self.editor.push_char('\n');
                     self.flags.recompute = true;
                 }
-            _ => println!("{:?}", ev.code)
+            KeyEvent {
+                code: KeyCode::Right,
+                modifiers : KeyModifiers::NONE
+            } =>{
+                    self.editor.move_cursor_right();
+                }
+            KeyEvent {
+                code: KeyCode::Left,
+                modifiers : KeyModifiers::NONE
+            } =>{
+                    self.editor.move_cursor_left();
+                }
+            KeyEvent {
+                code: KeyCode::Up,
+                modifiers : KeyModifiers::NONE
+            } =>{
+                    self.editor.move_cursor_up();
+                }
+            KeyEvent {
+                code: KeyCode::Down,
+                modifiers : KeyModifiers::NONE
+            } =>{
+                    self.editor.move_cursor_down();
+                }
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers : KeyModifiers::CONTROL
+            } =>{
+                    self.editor.save_file();
+                }
+            _ => ()
         }
         Ok(())
     }
 
     fn handle_events(&mut self) -> Result<()>{
-        if poll(Duration::from_secs(0))? {
+        if poll(Duration::from_millis(16))? {
             match read()?{
                 Event::Key(ev) => self.handle_keys(ev)?,
                 _ => println!("Some other event"),
@@ -227,7 +269,6 @@ impl Client{
             self.update()?;
             self.handle_events()?;
         }
-        // println!("{:?}", self.lines);
         Ok(())
     }
 }
