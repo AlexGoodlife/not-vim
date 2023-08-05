@@ -27,7 +27,7 @@ impl Editor{
         let buff = fs::read_to_string(path).unwrap();
         self.buffer_path = String::from(path);
         self.buffer = buff;
-        self.compute_lines();
+        self.compute_lines(0, std::usize::MAX);
         self.write_info = (false, self.buffer.len(),self.lines.len());
     }
 
@@ -35,7 +35,7 @@ impl Editor{
         self.lines.iter().enumerate().find(|line| self.cursor_index >=line.1.start && self.cursor_index <= line.1.end)
     }
 
-    pub fn compute_lines(&mut self){
+    pub fn compute_lines(&mut self, offset: usize, max_lines : usize){
         let mut result = Vec::new();
         let values = self.buffer.chars();
         let mut start = 0;
@@ -52,6 +52,49 @@ impl Editor{
         result.push(Line::new(start,end));
         self.lines = result;
     }
+
+    // pub fn compute_lines(&mut self, offset : usize, max_lines : usize){
+    //     // let mut result = Vec::new();
+    //     // let current_line = self.get_cursor_line();
+    //     let mut skip = 0;
+    //     let mut idx = 0;
+    //     if let Some(current_line) = self.get_cursor_line(){
+    //         skip  = current_line.1.start;
+    //         idx = current_line.0;
+    //     }
+    //
+    //     let values = self.buffer.chars().skip(skip);
+    //     let limit = max_lines + offset;
+    //     let mut start = skip;
+    //     let mut end = skip;
+    //     for c in values{
+    //         if idx >= limit{
+    //             break;
+    //         }
+    //         if c == '\n'{
+    //             if idx >= self.lines.len(){
+    //                 self.lines.push(Line::new(start, end));
+    //             }
+    //             else{
+    //                 let _ = std::mem::replace(&mut self.lines[idx], Line::new(start,end));
+    //                 // self.lines.shrink_to_fit(idx,Line::new(start, end));
+    //             }
+    //             start = end+1;
+    //             end = start;
+    //             idx +=1;
+    //             continue;
+    //         }
+    //         end += 1;
+    //     }
+    //     if idx < limit{
+    //         if idx >= self.lines.len(){
+    //             self.lines.push(Line::new(start, end));
+    //         }
+    //         // self.lines.insert(idx, Line::new(start,end));
+    //         // result.push(Line::new(start,end));
+    //     }
+    //     // self.lines = result;
+    // }
     // pub fn compute_lines(&mut self) -> Vec<Line>{
     //    Line::compute_lines(&self.buffer)
     // }
@@ -88,7 +131,7 @@ impl Editor{
     }
 
     pub fn move_cursor_right(&mut self){
-        self.cursor_index = std::cmp::min(self.cursor_index + 1,self.buffer.len());
+        self.cursor_index = std::cmp::min(self.cursor_index + 1,self.buffer.len()-1);
     }
 
     pub fn move_cursor_left(&mut self){
