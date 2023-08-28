@@ -5,7 +5,6 @@ pub mod editor;
 pub mod client;
 mod util;
 
-
 fn main(){
     let args : Vec<String> = env::args().collect();
     

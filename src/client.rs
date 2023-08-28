@@ -1,7 +1,7 @@
 use event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 use std::io::{Stdout, stdout, Write};
-
+use crossterm::style::Stylize;
 use event::{read, poll,Event};
 use crossterm::{ execute, terminal, terminal::enable_raw_mode, terminal::disable_raw_mode,Result, style,event, queue, cursor,terminal::size
 };
@@ -9,6 +9,8 @@ use crate::editor::Editor;
 use crate::util;
 
 const DEFAULT_PADDING:usize = 3;
+
+const DEBUG:bool = true;
 
 pub struct EditorFlags{
     quit : bool,
@@ -45,20 +47,25 @@ pub struct Client{
 impl Drop for Client{
     fn drop(&mut self) {
         disable_raw_mode().unwrap();
-        execute!(self.output, terminal::Clear(terminal::ClearType::All)).unwrap();
-        execute!(self.output, terminal::LeaveAlternateScreen).unwrap();
-        // self.editor.lines.iter().for_each(|line|println!("{:?}",line));
-        // println!("index {:?}", self.editor.cursor_index);
-        // println!("buffer len {:?}", self.editor.get_buffer().len());
-        // println!("{:?}", self.editor.lines);
-        // println!("{:?}", self.editor.cursor_index);
-        // println!("{:?}", self.window_offset);
-        // println!("{:?}", self.editor.lines.len());
-        // self.editor.lines.iter().enumerate().for_each(|(i,line)| {
-        //     print!("{} ", i);
-        //     println!("{:?}", line);
-        // }
-        // );
+        if DEBUG{
+
+            self.editor.lines.iter().for_each(|line|println!("{:?}",line));
+            println!("index {:?}", self.editor.cursor_index);
+            // println!("buffer len {:?}", self.editor.get_buffer().len());
+            // println!("{:?}", self.editor.lines);
+            // println!("{:?}", self.editor.cursor_index);
+            // println!("{:?}", self.window_offset);
+            // println!("{:?}", self.editor.lines.len());
+            // self.editor.lines.iter().enumerate().for_each(|(i,line)| {
+            //     print!("{} ", i);
+            //     println!("{:?}", line);
+            // }
+            // );
+        }
+        else{
+            execute!(self.output, terminal::Clear(terminal::ClearType::All)).unwrap();
+            execute!(self.output, terminal::LeaveAlternateScreen).unwrap();
+        }
     }
 
 }
@@ -134,7 +141,7 @@ impl Client{
             let current_size = util::digits(i + self.window_offset+1);
             let idx = i + self.window_offset;
             if idx >= self.editor.lines.len(){
-                result.push('~');
+                result.push_str(&'~'.dark_grey().to_string());
                 // if i < rows-1 {
                     result.push_str("\r\n");
                 // }
@@ -144,7 +151,7 @@ impl Client{
             for _pad in 0..(left_padding - current_size){
                 result.push(' ');
             }
-            result.push_str(&(idx+1).to_string());
+            result.push_str(&(idx+1).to_string().dark_grey().to_string());
             result.push(' ');
             let mut to_append = buffer.chars().skip(self.editor.lines[idx].start).take(self.editor.lines[idx].size).collect::<String>();
             // weird stuff
@@ -169,9 +176,8 @@ impl Client{
     fn update(&mut self) -> Result<()>{
         // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
         if self.should_recompute() {
-            self.editor.compute_lines();
+            self.editor.compute_lines(self.window_offset, self.text_dimensions.1.into());
             //this needs to be better implemented later
-            // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
             self.move_cursor_to_index();
             self.get_content();
             queue!(self.output, terminal::Clear(terminal::ClearType::All))?;
@@ -181,10 +187,11 @@ impl Client{
 
             queue!(self.output, style::Print(&self.content))?;
             queue!(self.output, style::Print(&self.editor.get_status()))?;
-            self.output.flush()?;
 
             // queue!(self.output, cursor::RestorePosition)?;
             queue!(self.output, crossterm::cursor::Show)?;
+            self.output.flush()?;
+            // self.cursor.move_to_index(&self.editor.lines, self.editor.cursor_index,window_x.into(), window_y.into(), &mut self.window_offset);
             self.flags.recompute = false;
         }
         let old_offset = self.window_offset.clone();
@@ -272,7 +279,9 @@ impl Client{
         Ok(())
     }
     pub fn run(&mut self) -> Result<()>{
-        execute!(self.output, terminal::EnterAlternateScreen)?;
+        if !DEBUG {
+            execute!(self.output, terminal::EnterAlternateScreen)?;
+        }
         enable_raw_mode()?;
         while !self.should_quit(){
             self.update()?;
