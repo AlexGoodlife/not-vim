@@ -18,6 +18,7 @@ fn main() {
 
     let dimensions = terminal::size().unwrap();
     log::info!("Started editor");
+    log::info!("Dimensions: {} columns, {} rows", dimensions.0, dimensions.1);
     let mut client = Client::new(stdout, dimensions);
     client
         .editor

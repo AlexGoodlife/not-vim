@@ -4,6 +4,7 @@ use std::io::Write;
 use std::mem;
 use std::time::Duration;
 
+use crate::editor::buffer::Buffer;
 use crossterm::cursor;
 use crossterm::event;
 use crossterm::event::poll;
@@ -19,7 +20,6 @@ use crossterm::terminal;
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
 use crossterm::Result;
-use crate::editor::buffer::Buffer;
 
 enum Mode {
     Normal,
@@ -47,7 +47,7 @@ impl Client {
             window_dimensions: dimensions,
             curr_buffer: Buffer::new(dimensions.0.into(), dimensions.1.into()),
             next_buffer: Buffer::new(dimensions.0.into(), dimensions.1.into()),
-            cursor_pos: (0, 0),
+            cursor_pos: (0,0),
             top_index: 0,
             mode: Mode::Normal,
             editor: Editor::new(),
@@ -57,10 +57,11 @@ impl Client {
 
     pub fn run(&mut self) -> Result<()> {
         execute!(self.stdout, terminal::EnterAlternateScreen)?;
+        execute!(self.stdout,crossterm::cursor::SetCursorShape(cursor::CursorShape::Block))?;
         enable_raw_mode()?;
         while !self.quit {
-            self.update()?;
             self.handle_events()?;
+            self.update()?;
         }
         Ok(())
     }
@@ -77,10 +78,11 @@ impl Client {
             if i >= self.next_buffer.height {
                 break;
             }
+
             self.next_buffer.put_str(
                 line,
                 (self.left_offset as u16, i as u16),
-                Color::White,
+                Color::Rgb { r: 215, g: 215, b: 215 },
                 Color::Reset,
             );
         }
@@ -106,15 +108,13 @@ impl Client {
 
     fn update(&mut self) -> Result<()> {
         self.draw_line_numbers();
+        self.update_cursor();
         self.draw_lines();
-        self.curr_buffer
-            .put_diff(&mut self.stdout, &self.next_buffer)?;
-        self.next_buffer.copy_into(&mut self.curr_buffer);
+        self.curr_buffer.put_diff(&mut self.stdout, &self.next_buffer)?;
+
         mem::swap(&mut self.next_buffer, &mut self.curr_buffer);
 
         self.next_buffer.clear_buffer();
-        self.update_cursor();
-        // log::info!("{},{}", self.editor.cursor_pos.0, self.editor.cursor_pos.1);
         queue!(
             self.stdout,
             cursor::MoveTo(self.cursor_pos.0, self.cursor_pos.1)
@@ -137,19 +137,19 @@ impl Client {
                 modifiers: KeyModifiers::NONE,
             } => {
                 self.mode = Mode::Normal;
+                queue!(self.stdout,crossterm::cursor::SetCursorShape(cursor::CursorShape::Block))?
             }
             KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
             } => {
-                self.editor.put_char('\n');
+                self.editor.put_newline();
             }
             KeyEvent {
                 code: KeyCode::Backspace,
                 modifiers: KeyModifiers::NONE,
             } => {
-                self.editor.move_cursor_left(); // if we are deleting the final character of a what we really are doing is joining two lines together
-                self.editor.pop_char();
+                self.editor.pop_backspace();
             }
             _ => (),
         }
@@ -199,6 +199,7 @@ impl Client {
                 modifiers: KeyModifiers::NONE,
             } => {
                 self.mode = Mode::Insert;
+                queue!(self.stdout,crossterm::cursor::SetCursorShape(cursor::CursorShape::Line))?
             }
             _ => (),
         }
@@ -226,8 +227,7 @@ impl Client {
     }
 
     fn draw_line_numbers(&mut self) {
-        self.left_offset = self.editor.buffer.lines.len().to_string().chars().count() + 2; //  2 extra for '|' and a space
-        log::info!("left offset {}", self.left_offset);
+        self.left_offset = self.editor.buffer.lines.len().to_string().chars().count() + 3; //  3 extra for '|' and a  2 spaces
         for (i, _line) in self
             .editor
             .buffer
@@ -241,16 +241,11 @@ impl Client {
             }
 
             let num_str = (i + self.top_index + 1).to_string();
-            log::info!(
-                "num {} and count {}",
-                i + self.top_index + 1,
-                num_str.chars().count()
-            );
-            let padding = self.left_offset- 2;
-            let padded = format!("{:>padding$}| ", num_str);
+            let padding = self.left_offset - 3;
+            let padded = format!("{:>padding$} │ ", num_str);
 
             self.next_buffer
-                .put_str(&padded, (0, i as u16), Color::White, Color::Reset);
+                .put_str(&padded, (0, i as u16), Color::Rgb { r: 50, g: 50, b: 50 }, Color::Reset);
         }
     }
 }
@@ -260,5 +255,32 @@ impl Drop for Client {
         disable_raw_mode().unwrap();
         execute!(self.stdout, terminal::Clear(terminal::ClearType::All)).unwrap();
         execute!(self.stdout, terminal::LeaveAlternateScreen).unwrap();
+        // let mut i = 0;
+        // for ele in self.editor.buffer.lines.clone() {
+        //     log::info!("{ele}");
+        //     i = i + 1;
+        //     if i == 10{
+        //         break;
+        //     }
+        // }
+        let mut i = 0;
+        for cell in self.curr_buffer.data.clone() {
+            if (cell.character == ' ') {
+                continue;
+            }
+            if (cell.character == '\n') {
+                log::info!("NEWLINE");
+                continue;
+            }
+            if (cell.character == '\r') {
+                log::info!("CARRIAGE RETURN");
+                continue;
+            }
+            log::info!("{}", cell.character);
+            i = i + 1;
+            if i == 100 {
+                break;
+            }
+        }
     }
 }

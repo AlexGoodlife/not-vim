@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::io::Stdout;
 
@@ -10,12 +9,17 @@ use crossterm::style::SetBackgroundColor;
 use crossterm::style::SetForegroundColor;
 use crossterm::Result;
 
-
-#[derive(Clone, PartialEq, Copy)]
+#[derive(Clone, Copy)]
 pub struct Cell {
-    character: char,
+    pub character: char,
     fg: Color,
     bg: Color,
+}
+
+impl PartialEq for Cell {
+    fn eq(&self, other: &Self) -> bool {
+        return self.character == other.character;
+    }
 }
 
 impl Cell {
@@ -25,7 +29,7 @@ impl Cell {
 }
 
 pub struct Buffer {
-    data: Vec<Cell>,
+    pub data: Vec<Cell>,
     pub width: usize,
     pub height: usize,
 }
@@ -71,20 +75,21 @@ impl Buffer {
     pub fn put_diff(&mut self, stdout: &mut Stdout, other: &Buffer) -> Result<()> {
         assert!(self.width == other.width && self.height == other.height);
         queue!(stdout, cursor::Hide)?;
-        for (index, curr_cell) in self.data.iter().enumerate() {
-            let other_cell = &other.data[index];
-            if curr_cell != other_cell {
-                queue!(
-                    stdout,
-                    cursor::MoveTo(
-                        (index % self.width).try_into().unwrap(),
-                        (index / self.width).try_into().unwrap()
-                    )
-                )?;
-                queue!(stdout, SetForegroundColor(other_cell.fg))?;
-                queue!(stdout, SetBackgroundColor(other_cell.bg))?;
-                queue!(stdout, Print(other_cell.character))?;
-            }
+        for (index, cells) in self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .enumerate()
+            .filter(|(_, (curr_cell, other_cell))| **curr_cell != **other_cell)
+        {
+            let (_, other_cell) = cells;
+            let x = (index % self.width).try_into().unwrap();
+            let y = (index / self.width).try_into().unwrap();
+            queue!(stdout, cursor::MoveTo(x, y))?;
+
+            queue!(stdout, SetForegroundColor(other_cell.fg))?;
+            queue!(stdout, SetBackgroundColor(other_cell.bg))?;
+            queue!(stdout, Print(other_cell.character))?;
         }
         Ok(())
     }
@@ -111,7 +116,7 @@ impl TextBuffer {
     pub fn from_path(path: &str) -> Result<TextBuffer> {
         let str = fs::read_to_string(path)?;
         Ok(TextBuffer {
-            lines: str.split('\n').map(|slice| slice.to_string()).collect(),
+            lines: str.split('\n').map(|slice| slice.trim().to_string()).collect(),
             path: path.to_owned(),
         })
     }
