@@ -40,14 +40,17 @@ pub struct Buffer {
 impl Buffer {
     pub fn new(width: usize, height: usize) -> Buffer {
         Buffer {
-            data: vec![Cell::new(' ', Color::Reset, Color::Reset); width * height],
+            data: vec![Cell::new(' ', Color::Black, Color::Black); width * height],
             width,
             height,
         }
     }
 
     pub fn put_cell(&mut self, c: Cell, pos: (usize, usize)) {
-        self.data[pos.1 * self.width + pos.0] = c;
+        let index = pos.1 * self.width + pos.0;
+        if index < self.data.len(){
+            self.data[pos.1 * self.width + pos.0] = c;
+        }
     }
 
     pub fn put_str(&mut self, data: &str, pos: (usize, usize), style: ContentStyle) {
@@ -74,10 +77,7 @@ impl Buffer {
             let y = (index / self.width).try_into().unwrap();
             queue!(stdout, cursor::MoveTo(x, y))?;
 
-            // queue!(stdout, crossterm::style::pr
             queue!(stdout, SetStyle(other_cell.style))?;
-            // queue!(stdout, SetForegroundColor(other_cell.fg))?;
-            // queue!(stdout, SetBackgroundColor(other_cell.bg))?;
             queue!(stdout, Print(other_cell.character))?;
         }
         Ok(())

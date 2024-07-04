@@ -8,6 +8,7 @@ use std::mem;
 use std::time::Duration;
 
 use crate::editor::buffer::Buffer;
+use crate::styles::*;
 use crossterm::cursor;
 use crossterm::event;
 use crossterm::event::poll;
@@ -20,96 +21,11 @@ use crossterm::event::KeyEventState;
 use crossterm::event::KeyModifiers;
 use crossterm::execute;
 use crossterm::queue;
-use crossterm::style::Attribute;
-use crossterm::style::Attributes;
-use crossterm::style::Color;
-use crossterm::style::ContentStyle;
 use crossterm::terminal;
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
 
 const DEBUG: bool = false;
-
-fn default_text_style() -> ContentStyle {
-    let mut attr = Attributes::default();
-    attr.set(Attribute::Reset);
-    ContentStyle {
-        foreground_color: Some(Color::Rgb {
-            r: 215,
-            g: 215,
-            b: 215,
-        }),
-        background_color: Some(Color::Reset),
-        underline_color: None,
-        attributes: attr,
-    }
-}
-
-fn default_line_number_style() -> ContentStyle {
-    let attr = Attributes::default();
-    // attr.set(Attribute::Reset);
-    ContentStyle {
-        foreground_color: Some(Color::Rgb {
-            r: 50,
-            g: 50,
-            b: 50,
-        }),
-        background_color: Some(Color::Reset),
-        underline_color: None,
-        attributes: attr,
-    }
-}
-
-fn gutter_style(mode: &Mode) -> ContentStyle {
-    let mut attr = Attributes::default();
-    // attr.set(Attribute::Reset);
-    attr.set(Attribute::Bold);
-    let color = match mode {
-        Mode::Normal => Some(Color::Rgb {
-            r: 100,
-            g: 149,
-            b: 171,
-        }),
-        Mode::Insert => Some(Color::Rgb {
-            r: 0,
-            g: 163,
-            b: 108,
-        }),
-    };
-    ContentStyle {
-        foreground_color: color,
-        background_color: color,
-        underline_color: None,
-        attributes: attr,
-    }
-}
-
-fn mode_style(mode: &Mode) -> ContentStyle {
-    let mut attr = Attributes::default();
-    attr.set(Attribute::Bold);
-    let color = match mode {
-        Mode::Normal => Some(Color::Rgb {
-            r: 100,
-            g: 149,
-            b: 171,
-        }),
-        Mode::Insert => Some(Color::Rgb {
-            r: 0,
-            g: 163,
-            b: 108,
-        }),
-    };
-    ContentStyle {
-        foreground_color: Some(Color::Rgb {
-            r: (0),
-            g: (0),
-            b: (0),
-        }),
-        background_color: color,
-        underline_color: None,
-        attributes: attr,
-    }
-}
 
 pub struct Client {
     stdout: Stdout,
@@ -173,7 +89,7 @@ impl Client {
 
         let c = "█".repeat(mode_len + 2);
 
-        let y = self.next_buffer.height - 1;
+        let y = self.next_buffer.height.saturating_sub(1);
         self.next_buffer
             .put_str(&c, (0, y), gutter_style(&self.editor.mode));
         self.next_buffer
@@ -181,13 +97,18 @@ impl Client {
         self.next_buffer
             .put_str(&name, (c.chars().count() + 1, y), default_text_style());
 
-        let c_2 = "█".repeat(self.next_buffer.width - (bytes_len + position_len));
+        let c_2 = "█".repeat(
+            self.next_buffer
+                .width
+                .saturating_sub(bytes_len + position_len),
+        );
 
         self.next_buffer.put_str(
             &c_2,
             (mode_len + padding_len + name_len - 1, y),
             gutter_style(&self.editor.mode),
         );
+
 
         for (i, c) in position.chars().enumerate() {
             let (char_to_put, style) = match c {
@@ -412,6 +333,12 @@ impl Client {
                     self.cursor_pos = (0, 0);
                     self.top_index = 0;
                     self.window_dimensions = (w, h - 1); // -1 for gutter
+                    self.stdout.flush()?;
+                    execute!(
+                        self.stdout,
+                        cursor::MoveTo(self.cursor_pos.0, self.cursor_pos.1)
+                    )?;
+                    execute!(self.stdout, terminal::Clear(terminal::ClearType::All))?;
                 }
                 Event::Key(ev) => match self.editor.mode {
                     Mode::Normal => self.handle_normal_keys(ev)?,
