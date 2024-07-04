@@ -380,14 +380,6 @@ impl Drop for Client {
         execute!(self.stdout, terminal::Clear(terminal::ClearType::All)).unwrap();
         execute!(self.stdout, terminal::LeaveAlternateScreen).unwrap();
         if DEBUG {
-            // let mut i = 0;
-            // for ele in self.editor.buffer.lines.clone() {
-            //     log::info!("{ele}");
-            //     i = i + 1;
-            //     if i == 10{
-            //         break;
-            //     }
-            // }
             let mut i = 0;
             for cell in self.curr_buffer.data.clone() {
                 if cell.character == ' ' {
