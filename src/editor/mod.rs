@@ -1,13 +1,47 @@
 pub mod buffer;
 
 use crate::editor::buffer::TextBuffer;
-use crossterm::Result;
 
 const DEFAULT_FILE_PATH: &str = "default.txt";
+
+#[derive(PartialEq,Clone)]
+pub enum Mode {
+    Normal,
+    Insert,
+}
+
+impl Mode{
+    pub fn to_string(&self) -> String{
+        match self {
+            Self::Normal => "NORMAL".to_string(),
+            Self::Insert => "INSERT".to_string(),
+        }
+    }
+}
+
+
+pub struct EditorStatus{
+    pub cursor_pos : (usize, usize),
+    pub curr_buffer : String,
+    pub mode : Mode,
+    pub bytes : usize,
+}
+
+impl EditorStatus{
+    pub fn from_editor(editor: &Editor) -> EditorStatus{
+        EditorStatus{
+            cursor_pos : editor.cursor_pos,
+            curr_buffer : editor.buffer.path.to_string(),
+            mode : editor.mode.clone(),
+            bytes : editor.buffer.bytes_len,
+        }
+    }
+}
 
 pub struct Editor {
     pub buffer: TextBuffer,
     pub cursor_pos: (usize, usize), // x, y, collumn, rows
+    pub mode: Mode,
 }
 
 impl Editor {
@@ -15,10 +49,11 @@ impl Editor {
         Editor {
             buffer: TextBuffer::new(DEFAULT_FILE_PATH),
             cursor_pos: (0, 0),
+            mode: Mode::Normal,
         }
     }
 
-    pub fn open_file(&mut self, path: &str) -> Result<()> {
+    pub fn open_file(&mut self, path: &str) -> anyhow::Result<()> {
         self.buffer = TextBuffer::from_path(path)?;
         log::info!("{}", self.buffer.lines.len());
         Ok(())
@@ -57,6 +92,8 @@ impl Editor {
     }
 
     pub fn pop_backspace(&mut self) {
+        //TODO fix the weird skipping issue, or just make the cursor be more leniant to being
+        //outside the buffer
         let prev_pos = self.cursor_pos;
         self.move_cursor_left();
         let new_pos = self.cursor_pos;
@@ -93,7 +130,13 @@ impl Editor {
             Some(result) => {
                 line.remove(result.0);
 
-                if line.len() > 0 && self.cursor_pos.0 > line.chars().count() - 1 {
+                let value_to_sub = match self.mode == Mode::Normal {
+                    //Normal mode can go a little bit out of the buffer
+                    true => 1,
+                    false => 0,
+                };
+
+                if line.len() > 0 && self.cursor_pos.0 > line.chars().count() - value_to_sub {
                     self.move_cursor_left()
                 }
             }
@@ -111,19 +154,24 @@ impl Editor {
     }
 
     pub fn move_cursor_right(&mut self) {
+        let value_to_sub = match self.mode == Mode::Normal {
+            //Normal mode can go a little bit out of the buffer
+            true => 1,
+            false => 0,
+        };
         self.cursor_pos.0 = std::cmp::min(
             self.cursor_pos.0 + 1,
             self.buffer.lines[self.cursor_pos.1]
                 .chars()
                 .count()
-                .checked_sub(1)
+                .checked_sub(value_to_sub)
                 .unwrap_or(0),
         );
     }
 
     pub fn move_cursor_down(&mut self) {
         self.cursor_pos.1 = std::cmp::min(self.cursor_pos.1 + 1, self.buffer.lines.len() - 1);
-        if self.cursor_pos.1 != self.buffer.lines.len() - 1 {
+        if self.cursor_pos.1 != self.buffer.lines.len()  {
             // If we are not in the very last line
             self.cursor_pos.0 = std::cmp::min(
                 self.buffer.lines[self.cursor_pos.1]
