@@ -7,6 +7,7 @@ use crate::client::Client;
 
 pub mod client;
 pub mod editor;
+pub mod styles;
 
 
 

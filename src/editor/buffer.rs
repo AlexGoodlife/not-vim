@@ -108,9 +108,9 @@ impl TextBuffer {
         let lines: Vec<String> = str.split('\n').map(|slice| slice.trim().to_string()).collect();
         let bytes_len = lines.iter().map(|s| s.len() + 1 ).reduce(|acc, e| acc + e).unwrap_or(1) - 1;
         Ok(TextBuffer {
-            lines: lines,
+            lines,
             path: path.to_owned(),
-            bytes_len : bytes_len,
+            bytes_len,
         })
     }
 
