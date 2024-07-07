@@ -72,7 +72,7 @@ impl Client {
         let mode = status.mode.to_string();
         let mode_len = mode.chars().count();
 
-        let position = format!("{}L {}C ", status.cursor_pos.1, status.cursor_pos.0);
+        let position = format!("{}:{} | ", status.cursor_pos.1, status.cursor_pos.0);
         let position_len = position.chars().count();
 
         let name = status.curr_buffer;
@@ -318,6 +318,15 @@ impl Client {
             } => {
                 self.editor.mode = Mode::Insert;
                 queue!(self.stdout, crossterm::cursor::SetCursorStyle::BlinkingBar)?
+            }
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                let n = self.editor.buffer.write_to_file()?;
+                log::info!("Wrote {} bytes into file {}", n, self.editor.buffer.path);
             }
             _ => (),
         }

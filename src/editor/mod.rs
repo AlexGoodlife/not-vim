@@ -210,4 +210,5 @@ impl Editor {
         self.buffer.lines[first_line] = first_string;
         self.buffer.lines.remove(second_line);
     }
+
 }
