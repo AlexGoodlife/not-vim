@@ -37,7 +37,7 @@ fn main() {
     log::info!("Dimensions: {} columns, {} rows", dimensions.0, dimensions.1);
     client
         .editor
-        .open_file("src/main.rs")
+        .open_file("test.txt")
         .map_err(|err| println!("Couldn't open file{err}")).unwrap();
     let _ = client.run().map_err(|err| log::error!("{err}"));
 }

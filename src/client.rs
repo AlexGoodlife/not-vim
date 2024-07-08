@@ -331,8 +331,9 @@ impl Client {
                     self.cursor_pos = (0, 0);
                     self.top_index = 0;
                     self.window_dimensions = (w, h - 1); // -1 for gutter
-                    self.buffer_viewport=  Viewport { pos: (0,0), width: w.into(), height: (h.saturating_sub(1)).into() };
-                    self.gutter_viewport=  Viewport { pos: (0,h.saturating_sub(1).into()), width: w.into(), height:  1 };
+                    self.buffer_viewport= Viewport { pos: (0,0), width: w.into(), height: h.saturating_sub(2).into() };
+                    self.gutter_viewport= Viewport { pos: (0,h.saturating_sub(2).into()), width: w.into(), height:  1 };
+                    self.messages_viewport= Viewport{pos: (0,h.saturating_sub(1).into()), width : w.into(), height: 1};
                     self.stdout.flush()?;
                     execute!(
                         self.stdout,
