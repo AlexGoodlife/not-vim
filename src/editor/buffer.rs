@@ -175,6 +175,7 @@ pub struct TextBuffer {
     pub lines: Vec<String>,
     pub path: String,
     pub bytes_len: usize,
+    pub has_changes : bool,
 }
 
 impl TextBuffer {
@@ -194,6 +195,7 @@ impl TextBuffer {
             lines,
             path: path.to_owned(),
             bytes_len,
+            has_changes: false,
         })
     }
 
@@ -202,6 +204,7 @@ impl TextBuffer {
             lines: Vec::new(),
             path: path.to_owned(),
             bytes_len: 0,
+            has_changes: false,
         }
     }
 

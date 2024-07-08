@@ -28,6 +28,7 @@ use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
 
 const DEBUG: bool = false;
+const TABSTOP: usize = 4;
 
 pub struct Client {
     stdout: Box<dyn Write>,
@@ -58,9 +59,21 @@ impl Client {
             top_index: 0,
             editor: Editor::new(),
             left_offset: 3, // space number |
-            buffer_viewport: Viewport { pos: (0,0), width: w, height: h.saturating_sub(2) },
-            gutter_viewport: Viewport { pos: (0,h.saturating_sub(2)), width: w, height:  1 },
-            messages_viewport: Viewport{pos: (0,h.saturating_sub(1)), width : w, height: 1},
+            buffer_viewport: Viewport {
+                pos: (0, 0),
+                width: w,
+                height: h.saturating_sub(2),
+            },
+            gutter_viewport: Viewport {
+                pos: (0, h.saturating_sub(2)),
+                width: w,
+                height: 1,
+            },
+            messages_viewport: Viewport {
+                pos: (0, h.saturating_sub(1)),
+                width: w,
+                height: 1,
+            },
         }
     }
 
@@ -82,12 +95,21 @@ impl Client {
         let mode = format!(" {} ", status.mode.to_string());
         let mode_len = mode.chars().count();
 
-        let name = format!("{}", status.curr_buffer);
+        let changes = if status.has_changes {" [+]"} else{""};
+        let name = format!("{}{}", status.curr_buffer, changes);
         let name_len = name.chars().count();
 
         let spacing_size = 3; // random spaces between things
-        let positions = format!("{} B | {}:{} ", status.bytes.to_string(), status.cursor_pos.1, status.cursor_pos.0);
-        let position_pad = std::cmp::max(positions.chars().count() + spacing_size, self.next_buffer.width/20);
+        let positions = format!(
+            "{} B | {}:{} ",
+            status.bytes.to_string(),
+            status.cursor_pos.1,
+            status.cursor_pos.0
+        );
+        let position_pad = std::cmp::max(
+            positions.chars().count() + spacing_size,
+            self.next_buffer.width / 20,
+        );
         let position = format!("{:>position_pad$}", positions);
         let position_len = position.chars().count();
 
@@ -95,20 +117,42 @@ impl Client {
         let _padding_len = self
             .curr_buffer
             .width
-            .saturating_sub(mode_len + position_len + name_len + spacing_size );
+            .saturating_sub(mode_len + position_len + name_len + spacing_size);
 
         // let y = self.next_buffer.height.saturating_sub(1);
-        self.next_buffer
-            .put_str(&mode, (0, 0), mode_style(&self.editor.mode), &self.gutter_viewport);
-        self.next_buffer
-            .put_str(&name, (mode_len + 1, 0), default_text_style(), &self.gutter_viewport);
-        self.next_buffer.put_str(&position, (self.next_buffer.width.saturating_sub( position_len), 0), mode_style(&self.editor.mode), &self.gutter_viewport);
+        self.next_buffer.put_str(
+            &mode,
+            (0, 0),
+            mode_style(&self.editor.mode),
+            &self.gutter_viewport,
+        );
+        self.next_buffer.put_str(
+            &name,
+            (mode_len + 1, 0),
+            default_text_style(),
+            &self.gutter_viewport,
+        );
+        self.next_buffer.put_str(
+            &position,
+            (self.next_buffer.width.saturating_sub(position_len), 0),
+            mode_style(&self.editor.mode),
+            &self.gutter_viewport,
+        );
     }
 
-    pub fn draw_messages(&mut self){
-        self.next_buffer.put_str(&self.editor.message, (0,0), default_text_style(), &self.messages_viewport);
+    pub fn draw_messages(&mut self) {
+        self.next_buffer.put_str(
+            &self.editor.message,
+            (0, 0),
+            default_text_style(),
+            &self.messages_viewport,
+        );
     }
 
+    fn get_spaces_till_next_tab(index: usize, tabstop: usize) -> usize {
+        let tab_stop_index = index / tabstop;
+        ((tab_stop_index * tabstop) + tabstop).saturating_sub(index)
+    }
     pub fn draw_lines(&mut self) {
         for (i, line) in self
             .editor
@@ -122,17 +166,33 @@ impl Client {
                 break;
             }
 
-            self.next_buffer
-                .put_str(line, (self.left_offset, i), default_text_style(),&self.buffer_viewport);
+
+            // Transform \t into appropriate amount of spaces
+            let mut s = String::new();
+            let mut size = 0;
+            for c in line.chars().into_iter() {
+                if c == '\t' {
+                    for _ in 0..Client::get_spaces_till_next_tab(size, TABSTOP) {
+                        s.push(' ');
+                        size += 1;
+                    }
+                } else {
+                    s.push(c);
+                    size += 1;
+                }
+            }
+            self.next_buffer.put_str(
+                &s,
+                (self.left_offset, i),
+                default_text_style(),
+                &self.buffer_viewport,
+            );
         }
     }
-
     fn update_cursor(&mut self) {
         let (editor_x, editor_y) = self.editor.cursor_pos;
         // let (client_x, client_y) = self.cursor_pos;
-        let viewport_height = (self.buffer_viewport.height )
-            .checked_sub(1)
-            .unwrap_or(0);
+        let viewport_height = (self.buffer_viewport.height).checked_sub(1).unwrap_or(0);
         if editor_y >= viewport_height + self.top_index {
             // We need to scroll down
             self.top_index += editor_y - (viewport_height + self.top_index);
@@ -141,7 +201,25 @@ impl Client {
             // We need to scroll up
             self.top_index -= self.top_index - editor_y;
         }
-        self.cursor_pos.0 = self.left_offset as u16 + editor_x as u16;
+        //Essentially we need to check which char our cursor is on, and find out how much we should
+        //shift our cursor based on how many \t were before it, since representations of \t on a
+        //buffer level are just singular characters
+        let curr_line = &self.editor.buffer.lines[editor_y];
+
+        let take_amount = if self.editor.mode == Mode::Normal {editor_x + 1} else {editor_x};
+        let shiftwidth =
+            curr_line
+                .chars()
+                .take(take_amount)
+                .enumerate()
+                .fold(0, |acc: usize, c| {
+                    let (i, char) = c;
+                    if char == '\t' {
+                        return acc + Client::get_spaces_till_next_tab((acc) + i, TABSTOP) - 1;
+                    }
+                    acc
+                });
+        self.cursor_pos.0 = self.left_offset as u16 + editor_x as u16 + shiftwidth as u16;
         self.cursor_pos.1 = (editor_y - self.top_index) as u16;
     }
 
@@ -163,8 +241,8 @@ impl Client {
 
     fn update(&mut self) -> anyhow::Result<()> {
         self.draw_line_numbers();
-        self.update_cursor();
         self.draw_lines();
+        self.update_cursor();
         self.draw_gutter();
         self.draw_messages();
         self.render_to_screen()?;
@@ -194,7 +272,14 @@ impl Client {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.editor.mode = Mode::Normal;
+                {
+                    // This hack makes it so the cursor when moving from insert to normal goes to
+                    // the right place on the line
+                    self.editor.move_cursor_left();
+                    self.editor.move_cursor_left();
+                    self.editor.mode = Mode::Normal;
+                    self.editor.move_cursor_right();
+                }
                 queue!(self.stdout, crossterm::cursor::SetCursorStyle::SteadyBlock)?
             }
             KeyEvent {
@@ -212,6 +297,14 @@ impl Client {
                 state: KeyEventState::NONE,
             } => {
                 self.editor.pop_backspace();
+            }
+            KeyEvent {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.editor.put_char('\t');
             }
             KeyEvent {
                 code: KeyCode::Left,
@@ -310,6 +403,16 @@ impl Client {
                 queue!(self.stdout, crossterm::cursor::SetCursorStyle::BlinkingBar)?
             }
             KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.editor.mode = Mode::Insert;
+                self.editor.move_cursor_right();
+                queue!(self.stdout, crossterm::cursor::SetCursorStyle::BlinkingBar)?
+            }
+            KeyEvent {
                 code: KeyCode::Char('s'),
                 modifiers: KeyModifiers::CONTROL,
                 kind: KeyEventKind::Press,
@@ -331,9 +434,21 @@ impl Client {
                     self.cursor_pos = (0, 0);
                     self.top_index = 0;
                     self.window_dimensions = (w, h - 1); // -1 for gutter
-                    self.buffer_viewport= Viewport { pos: (0,0), width: w.into(), height: h.saturating_sub(2).into() };
-                    self.gutter_viewport= Viewport { pos: (0,h.saturating_sub(2).into()), width: w.into(), height:  1 };
-                    self.messages_viewport= Viewport{pos: (0,h.saturating_sub(1).into()), width : w.into(), height: 1};
+                    self.buffer_viewport = Viewport {
+                        pos: (0, 0),
+                        width: w.into(),
+                        height: h.saturating_sub(2).into(),
+                    };
+                    self.gutter_viewport = Viewport {
+                        pos: (0, h.saturating_sub(2).into()),
+                        width: w.into(),
+                        height: 1,
+                    };
+                    self.messages_viewport = Viewport {
+                        pos: (0, h.saturating_sub(1).into()),
+                        width: w.into(),
+                        height: 1,
+                    };
                     self.stdout.flush()?;
                     execute!(
                         self.stdout,
@@ -369,8 +484,12 @@ impl Client {
             let padding = self.left_offset - 3;
             let padded = format!("{:>padding$} │ ", num_str);
 
-            self.next_buffer
-                .put_str(&padded, (0, i), default_line_number_style(), &self.buffer_viewport);
+            self.next_buffer.put_str(
+                &padded,
+                (0, i),
+                default_line_number_style(),
+                &self.buffer_viewport,
+            );
         }
     }
 }

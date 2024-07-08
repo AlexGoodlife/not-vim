@@ -14,7 +14,8 @@ pub mod styles;
 
 
 fn main() {
-    let _args: Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
+    let file_path = if args.len() < 2 { "test.txt"} else{&args[1]};
     log_to_file("editor.log", log::LevelFilter::Info).unwrap();
 
     let stdout = stdout();
@@ -37,7 +38,7 @@ fn main() {
     log::info!("Dimensions: {} columns, {} rows", dimensions.0, dimensions.1);
     client
         .editor
-        .open_file("test.txt")
+        .open_file(file_path)
         .map_err(|err| println!("Couldn't open file{err}")).unwrap();
     let _ = client.run().map_err(|err| log::error!("{err}"));
 }

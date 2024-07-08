@@ -25,6 +25,7 @@ pub struct EditorStatus{
     pub curr_buffer : String,
     pub mode : Mode,
     pub bytes : usize,
+    pub has_changes : bool,
 }
 
 impl EditorStatus{
@@ -34,6 +35,7 @@ impl EditorStatus{
             curr_buffer : editor.buffer.path.to_string(),
             mode : editor.mode.clone(),
             bytes : editor.buffer.bytes_len,
+            has_changes: editor.buffer.has_changes,
         }
     }
 }
@@ -78,6 +80,7 @@ impl Editor {
             }
         }
         self.cursor_pos.0 += 1;
+        self.buffer.has_changes = true;
     }
 
     pub fn put_newline(&mut self) {
@@ -97,6 +100,7 @@ impl Editor {
         self.buffer.lines.insert(self.cursor_pos.1 + 1, rest_of_str);
         self.cursor_pos.1 += 1;
         self.cursor_pos.0 = 0;
+        self.buffer.has_changes = true;
     }
 
     pub fn pop_backspace(&mut self) {
@@ -111,11 +115,12 @@ impl Editor {
             let second_line = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
             let second_line_cursor_pos = self.buffer.lines[second_line].chars().count();
             self.join_lines(second_line, first_line);
-            self.cursor_pos.0 = second_line_cursor_pos;
             self.cursor_pos.1 = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
+            self.cursor_pos.0 = if self.cursor_pos.1 == 0 {0} else {second_line_cursor_pos};
         } else {
             self.pop_char();
         }
+        self.buffer.has_changes = true;
     }
 
     fn remove_empty_line(&mut self, index: usize) {
@@ -127,6 +132,7 @@ impl Editor {
         log::info!("removing empty line");
         self.buffer.lines.remove(index);
         self.move_cursor_up();
+        self.buffer.has_changes = true;
     }
 
     pub fn pop_char(&mut self) {
@@ -155,6 +161,7 @@ impl Editor {
                 );
             }
         }
+        self.buffer.has_changes = true;
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -217,6 +224,8 @@ impl Editor {
         log::info!("{}", first_string);
         self.buffer.lines[first_line] = first_string;
         self.buffer.lines.remove(second_line);
+        self.buffer.has_changes = true;
     }
+
 
 }
