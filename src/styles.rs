@@ -2,17 +2,18 @@ use crossterm::style::{Attribute, Attributes, Color, ContentStyle};
 
 use crate::editor::Mode;
 
+pub const BLACK: Color = Color::Rgb{r:18,b:18,g:18};
 
 pub fn default_text_style() -> ContentStyle {
-    let mut attr = Attributes::default();
-    attr.set(Attribute::Reset);
+    let attr = Attributes::default();
+    // attr.set(Attribute::Reset);
     ContentStyle {
         foreground_color: Some(Color::Rgb {
             r: 215,
             g: 215,
             b: 215,
         }),
-        background_color: Some(Color::Reset),
+        background_color: Some(BLACK),
         underline_color: None,
         attributes: attr,
     }
@@ -27,7 +28,7 @@ pub fn default_line_number_style() -> ContentStyle {
             g: 50,
             b: 50,
         }),
-        background_color: Some(Color::Reset),
+        background_color: Some(BLACK),
         underline_color: None,
         attributes: attr,
     }

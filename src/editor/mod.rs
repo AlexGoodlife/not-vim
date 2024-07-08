@@ -42,6 +42,7 @@ pub struct Editor {
     pub buffer: TextBuffer,
     pub cursor_pos: (usize, usize), // x, y, collumn, rows
     pub mode: Mode,
+    pub message : String,
 }
 
 impl Editor {
@@ -50,12 +51,19 @@ impl Editor {
             buffer: TextBuffer::new(DEFAULT_FILE_PATH),
             cursor_pos: (0, 0),
             mode: Mode::Normal,
+            message: String::new(),
         }
     }
 
     pub fn open_file(&mut self, path: &str) -> anyhow::Result<()> {
         self.buffer = TextBuffer::from_path(path)?;
         log::info!("{}", self.buffer.lines.len());
+        Ok(())
+    }
+
+    pub fn write_current_buffer(&mut self) -> anyhow::Result<()>{
+        let (bytes, n ) = self.buffer.write_to_file()?;
+        self.message = format!("Wrote {} lines and {} bytes into \"{}\"", n, bytes, self.buffer.path);
         Ok(())
     }
 
