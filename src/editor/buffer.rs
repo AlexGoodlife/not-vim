@@ -182,7 +182,7 @@ impl TextBuffer {
         let str = fs::read_to_string(path)?;
         let lines: Vec<String> = str
             .split('\n')
-            .map(|slice| slice.trim().to_string())
+            .map(|slice| slice.trim_end().to_string())
             .collect();
         let bytes_len = lines
             .iter()

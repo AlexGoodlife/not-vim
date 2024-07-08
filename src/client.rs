@@ -101,7 +101,7 @@ impl Client {
         self.next_buffer
             .put_str(&mode, (0, 0), mode_style(&self.editor.mode), &self.gutter_viewport);
         self.next_buffer
-            .put_str(&name, (name_len + 1, 0), default_text_style(), &self.gutter_viewport);
+            .put_str(&name, (mode_len + 1, 0), default_text_style(), &self.gutter_viewport);
         self.next_buffer.put_str(&position, (self.next_buffer.width.saturating_sub( position_len), 0), mode_style(&self.editor.mode), &self.gutter_viewport);
     }
 
