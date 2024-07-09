@@ -3,7 +3,7 @@ pub mod buffer;
 use crate::editor::buffer::TextBuffer;
 
 const DEFAULT_FILE_PATH: &str = "default.txt";
-pub(crate) const TABSTOP: usize = 4;
+pub(crate) const TABSTOP: usize = 2;
 
 #[derive(PartialEq, Clone)]
 pub enum Mode {
@@ -196,6 +196,9 @@ impl Editor {
     }
 
     fn get_shiftwidth(s: &str, index: usize, tabstop: usize) -> usize {
+        if index == 0 {
+            return 0;
+        } // we can't possibly shift at index 0
         s.chars()
             .take(index + 1)
             .enumerate()
@@ -214,7 +217,40 @@ impl Editor {
     fn length_with_tabs(s: &str, tabstop: usize) -> usize {
         // This is sort of bad performance since we iterate over the string twice but editor
         // strings are usually small so its fine
-        Self::length_with_tabs_at(s, s.chars().count() - 1, tabstop)
+        Self::length_with_tabs_at(s, s.chars().count().saturating_sub(1), tabstop)
+    }
+
+    fn next_line_cursor_index(&mut self, current_y: usize, previous_y: usize) -> usize {
+        let normal_len = &self.buffer.lines[current_y].chars().count();
+        let len = Self::length_with_tabs(&self.buffer.lines[current_y], TABSTOP);
+        let value_to_sub = match self.mode == Mode::Normal {
+            //Insert mode can go a little bit out of the buffer
+            true => 1,
+            false => 0,
+        };
+        let cursor_x =
+            Self::length_with_tabs_at(&self.buffer.lines[previous_y], self.cursor_pos.0, TABSTOP)
+                .saturating_sub(1);
+
+        // We need to find the shiftwidth on the cursor_x on the line below us so we can shift
+        // accordingly, this is because a line under can have any arbitrary number of \t on any
+        // arbitrary index, so finding the correct index to move to is crucial, it behaves both
+        // differently to vscode and vim but its fine I think
+        let mut shiftwidth = 0;
+        let mut i = 0;
+        for c in self.buffer.lines[current_y].chars() {
+            // log::info!("index {i} {shiftwidth}, i + s{}", i + shiftwidth);
+            if c == '\t' {
+                let add = Self::get_spaces_till_next_tab(i + shiftwidth, TABSTOP).saturating_sub(1);
+                shiftwidth += add;
+            }
+            if i + shiftwidth >= cursor_x || i > *normal_len {
+                break;
+            }
+            i += 1;
+        }
+        // log::warn!("s {}, i {}, len {}, px {} cx {}", shiftwidth, i.saturating_sub(value_to_sub), normal_len.saturating_sub(value_to_sub), self.cursor_pos.0, cursor_x);
+        std::cmp::min(normal_len.saturating_sub(value_to_sub), i)
     }
 
     pub fn move_cursor_down(&mut self) {
@@ -222,25 +258,7 @@ impl Editor {
         self.cursor_pos.1 = std::cmp::min(self.cursor_pos.1 + 1, self.buffer.lines.len() - 1);
         if self.cursor_pos.1 != self.buffer.lines.len() {
             // If we are not in the very last line
-            let len = Self::length_with_tabs(&self.buffer.lines[self.cursor_pos.1], TABSTOP);
-            let value_to_sub = match self.mode == Mode::Normal {
-                //Insert mode can go a little bit out of the buffer
-                true => 1,
-                false => 0,
-            };
-            let cursor_x = Self::length_with_tabs_at(
-                &self.buffer.lines[previous_y],
-                self.cursor_pos.0,
-                TABSTOP,
-            );
-            let shiftwidth = Self::get_shiftwidth(
-                &self.buffer.lines[self.cursor_pos.1],
-                self.cursor_pos.0,
-                TABSTOP,
-            );
-            self.cursor_pos.0 =
-                std::cmp::min(len.saturating_sub(value_to_sub), cursor_x.saturating_sub(1))
-                    .saturating_sub(shiftwidth); // idk why I had to subtract 2 of off len
+            self.cursor_pos.0 = self.next_line_cursor_index(self.cursor_pos.1, previous_y);
         }
     }
 
@@ -248,20 +266,7 @@ impl Editor {
         let previous_y = self.cursor_pos.1;
         self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(1);
         if previous_y != 0 {
-            // If we are not in the very first line
-            let len = Self::length_with_tabs(&self.buffer.lines[self.cursor_pos.1], TABSTOP);
-            let cursor_x = Self::length_with_tabs_at(
-                &self.buffer.lines[previous_y],
-                self.cursor_pos.0,
-                TABSTOP,
-            );
-            let shiftwidth = Self::get_shiftwidth(
-                &self.buffer.lines[self.cursor_pos.1],
-                self.cursor_pos.0,
-                TABSTOP,
-            );
-            self.cursor_pos.0 = std::cmp::min(len.saturating_sub(1), cursor_x.saturating_sub(1))
-                .saturating_sub(shiftwidth);
+            self.cursor_pos.0 = self.next_line_cursor_index(self.cursor_pos.1, previous_y);
         }
     }
 

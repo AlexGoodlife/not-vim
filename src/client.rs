@@ -29,6 +29,7 @@ use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
 
 const DEBUG: bool = false;
+const INSERT_TABS: bool = true;
 
 pub struct Client {
     stdout: Box<dyn Write>,
@@ -173,7 +174,7 @@ impl Client {
             let mut size = 0;
             for c in line.chars().skip(self.side_scroll) {
                 if c == '\t' {
-                    for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
+                    for _ in 0..Editor::get_spaces_till_next_tab(size + self.side_scroll, TABSTOP) {
                         s.push(' ');
                         size += 1;
                     }
@@ -193,8 +194,8 @@ impl Client {
     fn update_cursor(&mut self) {
         let (editor_x, editor_y) = self.editor.cursor_pos;
         // let (client_x, client_y) = self.cursor_pos;
-        let viewport_height = (self.buffer_viewport.height).checked_sub(1).unwrap_or(0);
-        let viewport_width  = (self.buffer_viewport.width).checked_sub(1).unwrap_or(0);
+        let viewport_height = (self.buffer_viewport.height).saturating_sub(1);
+        let viewport_width  = (self.buffer_viewport.width).saturating_sub(1);
         if editor_y >= viewport_height + self.top_index {
             // We need to scroll down
             self.top_index += editor_y - (viewport_height + self.top_index);
@@ -203,12 +204,12 @@ impl Client {
             // We need to scroll up
             self.top_index -= self.top_index - editor_y;
         }
-        if editor_x >= viewport_width  + self.side_scroll{ // We need to scroll sideways
-            self.side_scroll += editor_x - (viewport_width + self.side_scroll);
+        if editor_x >= viewport_width - self.left_offset  + self.side_scroll{ // We need to scroll sideways
+            self.side_scroll += editor_x - (viewport_width + self.side_scroll - self.left_offset);
         }
-        if editor_x < self.side_scroll{
-            // We need to scroll up
-            self.side_scroll -= self.side_scroll - editor_x;
+        if editor_x < self.side_scroll + self.left_offset{
+            // We need to scroll left
+            self.side_scroll = self.side_scroll.saturating_sub((self.side_scroll).saturating_sub(editor_x));
         }
         //Essentially we need to check which char our cursor is on, and find out how much we should
         //shift our cursor based on how many \t were before it, since representations of \t on a
@@ -216,6 +217,7 @@ impl Client {
         let curr_line = &self.editor.buffer.lines[editor_y];
 
         let take_amount = if self.editor.mode == Mode::Normal {editor_x + 1 } else {editor_x };
+        log::info!("{}", self.side_scroll);
         let shiftwidth =
             curr_line
                 .chars()
@@ -225,11 +227,11 @@ impl Client {
                 .fold(0, |acc: usize, c| {
                     let (i, char) = c;
                     if char == '\t' {
-                        return acc + Editor::get_spaces_till_next_tab((acc) + i, TABSTOP) - 1;
+                        return acc + Editor::get_spaces_till_next_tab((acc) + i + self.side_scroll, TABSTOP) - 1;
                     }
                     acc
                 });
-        self.cursor_pos.0 = self.left_offset as u16 + editor_x as u16 + shiftwidth as u16;
+        self.cursor_pos.0 = (self.left_offset as u16 + editor_x as u16 + shiftwidth as u16).saturating_sub(self.side_scroll as u16);
         self.cursor_pos.1 = (editor_y - self.top_index) as u16;
     }
 
@@ -314,7 +316,14 @@ impl Client {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.editor.put_char('\t');
+                if INSERT_TABS {
+                    self.editor.put_char('\t');
+                }
+                else {
+                    for _ in 0..TABSTOP{
+                        self.editor.put_char(' ');
+                    }
+                }
             }
             KeyEvent {
                 code: KeyCode::Left,
@@ -443,7 +452,7 @@ impl Client {
                     self.curr_buffer = Buffer::new(w.into(), h.into());
                     self.cursor_pos = (0, 0);
                     self.top_index = 0;
-                    self.window_dimensions = (w, h - 1); // -1 for gutter
+                    self.window_dimensions = (w, h.saturating_sub(1)); // -1 for gutter
                     self.buffer_viewport = Viewport {
                         pos: (0, 0),
                         width: w.into(),
