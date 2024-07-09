@@ -2,6 +2,7 @@ use crate::editor::buffer::Viewport;
 use crate::editor::Editor;
 use crate::editor::EditorStatus;
 use crate::editor::Mode;
+use crate::editor::TABSTOP;
 use std::io::Stdout;
 use std::io::Write;
 use std::mem;
@@ -28,7 +29,6 @@ use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
 
 const DEBUG: bool = false;
-const TABSTOP: usize = 4;
 
 pub struct Client {
     stdout: Box<dyn Write>,
@@ -37,12 +37,16 @@ pub struct Client {
     curr_buffer: Buffer,
     next_buffer: Buffer,
     cursor_pos: (u16, u16),
-    top_index: usize,
-    left_offset: usize, // For line numbers,
     buffer_viewport: Viewport,
     gutter_viewport: Viewport,
     messages_viewport: Viewport,
     pub editor: Editor,
+
+    // buffer rendering stuff
+    top_index: usize,
+    left_offset: usize, // For line numbers,
+    side_scroll: usize,
+    
 }
 
 impl Client {
@@ -59,6 +63,7 @@ impl Client {
             top_index: 0,
             editor: Editor::new(),
             left_offset: 3, // space number |
+            side_scroll: 0,
             buffer_viewport: Viewport {
                 pos: (0, 0),
                 width: w,
@@ -149,10 +154,6 @@ impl Client {
         );
     }
 
-    fn get_spaces_till_next_tab(index: usize, tabstop: usize) -> usize {
-        let tab_stop_index = index / tabstop;
-        ((tab_stop_index * tabstop) + tabstop).saturating_sub(index)
-    }
     pub fn draw_lines(&mut self) {
         for (i, line) in self
             .editor
@@ -170,9 +171,9 @@ impl Client {
             // Transform \t into appropriate amount of spaces
             let mut s = String::new();
             let mut size = 0;
-            for c in line.chars().into_iter() {
+            for c in line.chars().skip(self.side_scroll) {
                 if c == '\t' {
-                    for _ in 0..Client::get_spaces_till_next_tab(size, TABSTOP) {
+                    for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
                         s.push(' ');
                         size += 1;
                     }
@@ -193,6 +194,7 @@ impl Client {
         let (editor_x, editor_y) = self.editor.cursor_pos;
         // let (client_x, client_y) = self.cursor_pos;
         let viewport_height = (self.buffer_viewport.height).checked_sub(1).unwrap_or(0);
+        let viewport_width  = (self.buffer_viewport.width).checked_sub(1).unwrap_or(0);
         if editor_y >= viewport_height + self.top_index {
             // We need to scroll down
             self.top_index += editor_y - (viewport_height + self.top_index);
@@ -201,21 +203,29 @@ impl Client {
             // We need to scroll up
             self.top_index -= self.top_index - editor_y;
         }
+        if editor_x >= viewport_width  + self.side_scroll{ // We need to scroll sideways
+            self.side_scroll += editor_x - (viewport_width + self.side_scroll);
+        }
+        if editor_x < self.side_scroll{
+            // We need to scroll up
+            self.side_scroll -= self.side_scroll - editor_x;
+        }
         //Essentially we need to check which char our cursor is on, and find out how much we should
         //shift our cursor based on how many \t were before it, since representations of \t on a
         //buffer level are just singular characters
         let curr_line = &self.editor.buffer.lines[editor_y];
 
-        let take_amount = if self.editor.mode == Mode::Normal {editor_x + 1} else {editor_x};
+        let take_amount = if self.editor.mode == Mode::Normal {editor_x + 1 } else {editor_x };
         let shiftwidth =
             curr_line
                 .chars()
+                .skip(self.side_scroll)
                 .take(take_amount)
                 .enumerate()
                 .fold(0, |acc: usize, c| {
                     let (i, char) = c;
                     if char == '\t' {
-                        return acc + Client::get_spaces_till_next_tab((acc) + i, TABSTOP) - 1;
+                        return acc + Editor::get_spaces_till_next_tab((acc) + i, TABSTOP) - 1;
                     }
                     acc
                 });

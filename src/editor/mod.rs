@@ -3,15 +3,16 @@ pub mod buffer;
 use crate::editor::buffer::TextBuffer;
 
 const DEFAULT_FILE_PATH: &str = "default.txt";
+pub(crate) const TABSTOP: usize = 4;
 
-#[derive(PartialEq,Clone)]
+#[derive(PartialEq, Clone)]
 pub enum Mode {
     Normal,
     Insert,
 }
 
-impl Mode{
-    pub fn to_string(&self) -> String{
+impl Mode {
+    pub fn to_string(&self) -> String {
         match self {
             Self::Normal => "NORMAL".to_string(),
             Self::Insert => "INSERT".to_string(),
@@ -19,22 +20,21 @@ impl Mode{
     }
 }
 
-
-pub struct EditorStatus{
-    pub cursor_pos : (usize, usize),
-    pub curr_buffer : String,
-    pub mode : Mode,
-    pub bytes : usize,
-    pub has_changes : bool,
+pub struct EditorStatus {
+    pub cursor_pos: (usize, usize),
+    pub curr_buffer: String,
+    pub mode: Mode,
+    pub bytes: usize,
+    pub has_changes: bool,
 }
 
-impl EditorStatus{
-    pub fn from_editor(editor: &Editor) -> EditorStatus{
-        EditorStatus{
-            cursor_pos : editor.cursor_pos,
-            curr_buffer : editor.buffer.path.to_string(),
-            mode : editor.mode.clone(),
-            bytes : editor.buffer.bytes_len,
+impl EditorStatus {
+    pub fn from_editor(editor: &Editor) -> EditorStatus {
+        EditorStatus {
+            cursor_pos: editor.cursor_pos,
+            curr_buffer: editor.buffer.path.to_string(),
+            mode: editor.mode.clone(),
+            bytes: editor.buffer.bytes_len,
             has_changes: editor.buffer.has_changes,
         }
     }
@@ -44,7 +44,7 @@ pub struct Editor {
     pub buffer: TextBuffer,
     pub cursor_pos: (usize, usize), // x, y, collumn, rows
     pub mode: Mode,
-    pub message : String,
+    pub message: String,
 }
 
 impl Editor {
@@ -63,9 +63,12 @@ impl Editor {
         Ok(())
     }
 
-    pub fn write_current_buffer(&mut self) -> anyhow::Result<()>{
-        let (bytes, n ) = self.buffer.write_to_file()?;
-        self.message = format!("Wrote {} lines and {} bytes into \"{}\"", n, bytes, self.buffer.path);
+    pub fn write_current_buffer(&mut self) -> anyhow::Result<()> {
+        let (bytes, n) = self.buffer.write_to_file()?;
+        self.message = format!(
+            "Wrote {} lines and {} bytes into \"{}\"",
+            n, bytes, self.buffer.path
+        );
         Ok(())
     }
 
@@ -116,7 +119,11 @@ impl Editor {
             let second_line_cursor_pos = self.buffer.lines[second_line].chars().count();
             self.join_lines(second_line, first_line);
             self.cursor_pos.1 = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
-            self.cursor_pos.0 = if self.cursor_pos.1 == 0 {0} else {second_line_cursor_pos};
+            self.cursor_pos.0 = if self.cursor_pos.1 == 0 {
+                0
+            } else {
+                second_line_cursor_pos
+            };
         } else {
             self.pop_char();
         }
@@ -145,7 +152,7 @@ impl Editor {
                 line.remove(result.0);
 
                 let value_to_sub = match self.mode == Mode::Normal {
-                    //Normal mode can go a little bit out of the buffer
+                    //Insert mode can go a little bit out of the buffer
                     true => 1,
                     false => 0,
                 };
@@ -179,38 +186,82 @@ impl Editor {
             self.buffer.lines[self.cursor_pos.1]
                 .chars()
                 .count()
-                .checked_sub(value_to_sub)
-                .unwrap_or(0),
+                .saturating_sub(value_to_sub),
         );
     }
 
+    pub fn get_spaces_till_next_tab(index: usize, tabstop: usize) -> usize {
+        let tab_stop_index = index / tabstop;
+        ((tab_stop_index * tabstop) + tabstop).saturating_sub(index)
+    }
+
+    fn get_shiftwidth(s: &str, index: usize, tabstop: usize) -> usize {
+        s.chars()
+            .take(index + 1)
+            .enumerate()
+            .fold(0, |acc: usize, c| {
+                let (i, char) = c;
+                if char == '\t' {
+                    return acc + Self::get_spaces_till_next_tab(acc + i, tabstop) - 1;
+                }
+                acc
+            })
+    }
+    fn length_with_tabs_at(s: &str, index: usize, tabstop: usize) -> usize {
+        Self::get_shiftwidth(s, index, tabstop) + index + 1
+    }
+
+    fn length_with_tabs(s: &str, tabstop: usize) -> usize {
+        // This is sort of bad performance since we iterate over the string twice but editor
+        // strings are usually small so its fine
+        Self::length_with_tabs_at(s, s.chars().count() - 1, tabstop)
+    }
+
     pub fn move_cursor_down(&mut self) {
+        let previous_y = self.cursor_pos.1;
         self.cursor_pos.1 = std::cmp::min(self.cursor_pos.1 + 1, self.buffer.lines.len() - 1);
-        if self.cursor_pos.1 != self.buffer.lines.len()  {
+        if self.cursor_pos.1 != self.buffer.lines.len() {
             // If we are not in the very last line
-            self.cursor_pos.0 = std::cmp::min(
-                self.buffer.lines[self.cursor_pos.1]
-                    .chars()
-                    .count()
-                    .checked_sub(1)
-                    .unwrap_or(0),
+            let len = Self::length_with_tabs(&self.buffer.lines[self.cursor_pos.1], TABSTOP);
+            let value_to_sub = match self.mode == Mode::Normal {
+                //Insert mode can go a little bit out of the buffer
+                true => 1,
+                false => 0,
+            };
+            let cursor_x = Self::length_with_tabs_at(
+                &self.buffer.lines[previous_y],
                 self.cursor_pos.0,
+                TABSTOP,
             );
+            let shiftwidth = Self::get_shiftwidth(
+                &self.buffer.lines[self.cursor_pos.1],
+                self.cursor_pos.0,
+                TABSTOP,
+            );
+            self.cursor_pos.0 =
+                std::cmp::min(len.saturating_sub(value_to_sub), cursor_x.saturating_sub(1))
+                    .saturating_sub(shiftwidth); // idk why I had to subtract 2 of off len
         }
     }
 
     pub fn move_cursor_up(&mut self) {
-        self.cursor_pos.1 = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
-        if self.cursor_pos.1 != 0 {
+        let previous_y = self.cursor_pos.1;
+        self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(1);
+        if previous_y != 0 {
             // If we are not in the very first line
-            self.cursor_pos.0 = std::cmp::min(
-                self.buffer.lines[self.cursor_pos.1]
-                    .chars()
-                    .count()
-                    .checked_sub(1)
-                    .unwrap_or(0),
+            let len = Self::length_with_tabs(&self.buffer.lines[self.cursor_pos.1], TABSTOP);
+            let cursor_x = Self::length_with_tabs_at(
+                &self.buffer.lines[previous_y],
                 self.cursor_pos.0,
+                TABSTOP,
             );
+            let shiftwidth = Self::get_shiftwidth(
+                &self.buffer.lines[self.cursor_pos.1],
+                self.cursor_pos.0,
+                TABSTOP,
+            );
+            self.cursor_pos.0 = std::cmp::min(len.saturating_sub(1), cursor_x.saturating_sub(1))
+                .saturating_sub(shiftwidth);
         }
     }
 
@@ -226,6 +277,4 @@ impl Editor {
         self.buffer.lines.remove(second_line);
         self.buffer.has_changes = true;
     }
-
-
 }
