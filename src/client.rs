@@ -169,12 +169,13 @@ impl Client {
             }
 
 
-            // Transform \t into appropriate amount of spaces
+            // Transform \t into appropriate amount of spaces, using size instead of len() to avoid
+            // counting string length everytime
             let mut s = String::new();
             let mut size = 0;
-            for c in line.chars().skip(self.side_scroll) {
+            for c in line.chars(){
                 if c == '\t' {
-                    for _ in 0..Editor::get_spaces_till_next_tab(size + self.side_scroll, TABSTOP) {
+                    for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
                         s.push(' ');
                         size += 1;
                     }
@@ -183,8 +184,11 @@ impl Client {
                     size += 1;
                 }
             }
+            // We now skip the string its appropriate left_offset, we always have to calculate it
+            // like this to avoid cases because of tabs
+            let skipped_string: String = s.chars().skip(self.side_scroll).collect::<String>();
             self.next_buffer.put_str(
-                &s,
+                &skipped_string,
                 (self.left_offset, i),
                 default_text_style(),
                 &self.buffer_viewport,
@@ -217,7 +221,6 @@ impl Client {
         let curr_line = &self.editor.buffer.lines[editor_y];
 
         let take_amount = if self.editor.mode == Mode::Normal {editor_x + 1 } else {editor_x };
-        log::info!("{}", self.side_scroll);
         let shiftwidth =
             curr_line
                 .chars()
