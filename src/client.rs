@@ -1,14 +1,17 @@
 use crate::editor::buffer::Viewport;
 use crate::editor::Editor;
-use crate::editor::EditorStatus;
 use crate::editor::Mode;
 use crate::editor::TABSTOP;
+use crate::ui::Component;
+use crate::ui::EditorBuffer;
+use crate::ui::Gutter;
+use crate::ui::MessagesComponent;
 use std::io::Stdout;
 use std::io::Write;
 use std::mem;
 use std::time::Duration;
 
-use crate::editor::buffer::Buffer;
+use crate::editor::buffer::RenderBuffer;
 use crate::styles::*;
 use crossterm::cursor;
 use crossterm::event;
@@ -34,52 +37,83 @@ const INSERT_TABS: bool = true;
 pub struct Client {
     stdout: Box<dyn Write>,
     quit: bool,
-    window_dimensions: (u16, u16),
-    curr_buffer: Buffer,
-    next_buffer: Buffer,
+    // window_dimensions: (u16, u16),
+    curr_buffer: RenderBuffer,
+    next_buffer: RenderBuffer,
     cursor_pos: (u16, u16),
-    buffer_viewport: Viewport,
-    gutter_viewport: Viewport,
-    messages_viewport: Viewport,
     pub editor: Editor,
-
-    // buffer rendering stuff
-    top_index: usize,
-    left_offset: usize, // For line numbers,
-    side_scroll: usize,
-    
+    ui_components: Vec<Box<dyn Component>>,
+    active_compontent_index: usize,
 }
 
 impl Client {
     pub fn new(stdout: Stdout, dimensions: (u16, u16)) -> Client {
         let w = dimensions.0 as usize;
         let h = dimensions.1 as usize;
-        Client {
+        let mut result = Client {
             stdout: Box::new(stdout),
             quit: false,
-            window_dimensions: (w as u16, (h.saturating_sub(1)) as u16), // for gutter
-            curr_buffer: Buffer::new(w, h),
-            next_buffer: Buffer::new(w, h),
+            // window_dimensions: (w as u16, (h.saturating_sub(1)) as u16), // for gutter
+            curr_buffer: RenderBuffer::new(w, h),
+            next_buffer: RenderBuffer::new(w, h),
             cursor_pos: (0, 0),
-            top_index: 0,
             editor: Editor::new(),
-            left_offset: 3, // space number |
-            side_scroll: 0,
-            buffer_viewport: Viewport {
-                pos: (0, 0),
-                width: w,
-                height: h.saturating_sub(2),
-            },
-            gutter_viewport: Viewport {
+            ui_components: Vec::new(),
+            active_compontent_index: 0,
+        };
+        let messages_viewport = Viewport {
+            pos: (0, h.saturating_sub(1)),
+            width: w,
+            height: 1,
+        };
+        let buffer_viewport = Viewport {
+            pos: (0, 0),
+            width: w,
+            height: h.saturating_sub(2),
+        };
+        let gutter_viewport = Viewport {
+            pos: (0, h.saturating_sub(2)),
+            width: w,
+            height: 1,
+        };
+        result.ui_components.push(Box::new(EditorBuffer::new(
+            buffer_viewport,
+            Box::new(|w, h| {
+                let x = 0;
+                let y = 0;
+                let width = w;
+                let height = h.saturating_sub(2);
+                Viewport {
+                    pos: (x, y),
+                    width,
+                    height,
+                }
+            }),
+        )));
+
+        result.ui_components.push(Box::new(Gutter::new(
+            gutter_viewport,
+            Box::new(|w, h| Viewport {
                 pos: (0, h.saturating_sub(2)),
                 width: w,
                 height: 1,
-            },
-            messages_viewport: Viewport {
+            }),
+        )));
+
+        result.ui_components.push(Box::new(MessagesComponent::new(
+            messages_viewport,
+            Box::new(|w, h| Viewport {
                 pos: (0, h.saturating_sub(1)),
                 width: w,
                 height: 1,
-            },
+            }),
+        )));
+        result
+    }
+
+    fn resize_components(&mut self, window_w: usize, window_h: usize) {
+        for c in self.ui_components.iter_mut() {
+            c.resize(window_w, window_h);
         }
     }
 
@@ -92,150 +126,6 @@ impl Client {
             self.update()?;
         }
         Ok(())
-    }
-
-    pub fn draw_gutter(&mut self) {
-        // Todo refactor all of this bs
-        let status = EditorStatus::from_editor(&self.editor);
-        // We draw the gutter across the entire buffer
-        let mode = format!(" {} ", status.mode.to_string());
-        let mode_len = mode.chars().count();
-
-        let changes = if status.has_changes {" [+]"} else{""};
-        let name = format!("{}{}", status.curr_buffer, changes);
-        let name_len = name.chars().count();
-
-        let spacing_size = 3; // random spaces between things
-        let positions = format!(
-            "{} B | {}:{} ",
-            status.bytes.to_string(),
-            status.cursor_pos.1,
-            status.cursor_pos.0
-        );
-        let position_pad = std::cmp::max(
-            positions.chars().count() + spacing_size,
-            self.next_buffer.width / 20,
-        );
-        let position = format!("{:>position_pad$}", positions);
-        let position_len = position.chars().count();
-
-        //unused anymore but I'm keeping it
-        let _padding_len = self
-            .curr_buffer
-            .width
-            .saturating_sub(mode_len + position_len + name_len + spacing_size);
-
-        // let y = self.next_buffer.height.saturating_sub(1);
-        self.next_buffer.put_str(
-            &mode,
-            (0, 0),
-            mode_style(&self.editor.mode),
-            &self.gutter_viewport,
-        );
-        self.next_buffer.put_str(
-            &name,
-            (mode_len + 1, 0),
-            default_text_style(),
-            &self.gutter_viewport,
-        );
-        self.next_buffer.put_str(
-            &position,
-            (self.next_buffer.width.saturating_sub(position_len), 0),
-            mode_style(&self.editor.mode),
-            &self.gutter_viewport,
-        );
-    }
-
-    pub fn draw_messages(&mut self) {
-        self.next_buffer.put_str(
-            &self.editor.message,
-            (0, 0),
-            default_text_style(),
-            &self.messages_viewport,
-        );
-    }
-
-    pub fn draw_lines(&mut self) {
-        for (i, line) in self
-            .editor
-            .buffer
-            .lines
-            .iter()
-            .skip(self.top_index)
-            .enumerate()
-        {
-            if i >= self.buffer_viewport.height as usize {
-                break;
-            }
-
-
-            // Transform \t into appropriate amount of spaces, using size instead of len() to avoid
-            // counting string length everytime
-            let mut s = String::new();
-            let mut size = 0;
-            for c in line.chars(){
-                if c == '\t' {
-                    for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
-                        s.push(' ');
-                        size += 1;
-                    }
-                } else {
-                    s.push(c);
-                    size += 1;
-                }
-            }
-            // We now skip the string its appropriate left_offset, we always have to calculate it
-            // like this to avoid cases because of tabs
-            let skipped_string: String = s.chars().skip(self.side_scroll).collect::<String>();
-            self.next_buffer.put_str(
-                &skipped_string,
-                (self.left_offset, i),
-                default_text_style(),
-                &self.buffer_viewport,
-            );
-        }
-    }
-    fn update_cursor(&mut self) {
-        let (editor_x, editor_y) = self.editor.cursor_pos;
-        // let (client_x, client_y) = self.cursor_pos;
-        let viewport_height = (self.buffer_viewport.height).saturating_sub(1);
-        let viewport_width  = (self.buffer_viewport.width).saturating_sub(1);
-        if editor_y >= viewport_height + self.top_index {
-            // We need to scroll down
-            self.top_index += editor_y - (viewport_height + self.top_index);
-        }
-        if editor_y < self.top_index {
-            // We need to scroll up
-            self.top_index -= self.top_index - editor_y;
-        }
-        if editor_x >= viewport_width - self.left_offset  + self.side_scroll{ // We need to scroll sideways
-            self.side_scroll += editor_x - (viewport_width + self.side_scroll - self.left_offset);
-        }
-        if editor_x < self.side_scroll + self.left_offset{
-            // We need to scroll left
-            self.side_scroll = self.side_scroll.saturating_sub((self.side_scroll).saturating_sub(editor_x));
-        }
-        //Essentially we need to check which char our cursor is on, and find out how much we should
-        //shift our cursor based on how many \t were before it, since representations of \t on a
-        //buffer level are just singular characters
-        let curr_line = &self.editor.buffer.lines[editor_y];
-
-        let take_amount = if self.editor.mode == Mode::Normal {editor_x + 1 } else {editor_x };
-        let shiftwidth =
-            curr_line
-                .chars()
-                .skip(self.side_scroll)
-                .take(take_amount)
-                .enumerate()
-                .fold(0, |acc: usize, c| {
-                    let (i, char) = c;
-                    if char == '\t' {
-                        return acc + Editor::get_spaces_till_next_tab((acc) + i + self.side_scroll, TABSTOP) - 1;
-                    }
-                    acc
-                });
-        self.cursor_pos.0 = (self.left_offset as u16 + editor_x as u16 + shiftwidth as u16).saturating_sub(self.side_scroll as u16);
-        self.cursor_pos.1 = (editor_y - self.top_index) as u16;
     }
 
     fn render_to_screen(&mut self) -> anyhow::Result<()> {
@@ -254,12 +144,21 @@ impl Client {
         Ok(())
     }
 
+    fn update_components(&mut self) {
+        for c in self.ui_components.iter_mut() {
+            c.draw(&mut self.next_buffer, &mut self.editor)
+        }
+        let current_component = &self.ui_components[self.active_compontent_index];
+        let (viewport_x, viewport_y) = current_component.get_viewport().pos;
+
+        let (new_x, new_y) =
+            self.ui_components[self.active_compontent_index].update_cursor(&mut self.editor);
+        self.cursor_pos.0 = viewport_x as u16 + new_x;
+        self.cursor_pos.1 = viewport_y as u16 + new_y;
+    }
+
     fn update(&mut self) -> anyhow::Result<()> {
-        self.draw_line_numbers();
-        self.draw_lines();
-        self.update_cursor();
-        self.draw_gutter();
-        self.draw_messages();
+        self.update_components();
         self.render_to_screen()?;
 
         queue!(
@@ -321,9 +220,8 @@ impl Client {
             } => {
                 if INSERT_TABS {
                     self.editor.put_char('\t');
-                }
-                else {
-                    for _ in 0..TABSTOP{
+                } else {
+                    for _ in 0..TABSTOP {
                         self.editor.put_char(' ');
                     }
                 }
@@ -451,26 +349,11 @@ impl Client {
         if poll(Duration::from_millis(16))? {
             match read()? {
                 Event::Resize(w, h) => {
-                    self.next_buffer = Buffer::new(w.into(), h.into());
-                    self.curr_buffer = Buffer::new(w.into(), h.into());
+                    self.next_buffer = RenderBuffer::new(w.into(), h.into());
+                    self.curr_buffer = RenderBuffer::new(w.into(), h.into());
                     self.cursor_pos = (0, 0);
-                    self.top_index = 0;
-                    self.window_dimensions = (w, h.saturating_sub(1)); // -1 for gutter
-                    self.buffer_viewport = Viewport {
-                        pos: (0, 0),
-                        width: w.into(),
-                        height: h.saturating_sub(2).into(),
-                    };
-                    self.gutter_viewport = Viewport {
-                        pos: (0, h.saturating_sub(2).into()),
-                        width: w.into(),
-                        height: 1,
-                    };
-                    self.messages_viewport = Viewport {
-                        pos: (0, h.saturating_sub(1).into()),
-                        width: w.into(),
-                        height: 1,
-                    };
+                    // self.window_dimensions = (w, h.saturating_sub(1)); // -1 for gutter
+                    self.resize_components(w.into(), h.into());
                     self.stdout.flush()?;
                     execute!(
                         self.stdout,
@@ -486,33 +369,6 @@ impl Client {
             }
         }
         Ok(())
-    }
-
-    fn draw_line_numbers(&mut self) {
-        self.left_offset = self.editor.buffer.lines.len().to_string().chars().count() + 3; //  3 extra for '|' and a  2 spaces
-        for (i, _line) in self
-            .editor
-            .buffer
-            .lines
-            .iter()
-            .skip(self.top_index)
-            .enumerate()
-        {
-            if i >= self.window_dimensions.1 as usize {
-                break;
-            }
-
-            let num_str = (i + self.top_index + 1).to_string();
-            let padding = self.left_offset - 3;
-            let padded = format!("{:>padding$} │ ", num_str);
-
-            self.next_buffer.put_str(
-                &padded,
-                (0, i),
-                default_line_number_style(),
-                &self.buffer_viewport,
-            );
-        }
     }
 }
 

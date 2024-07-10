@@ -10,6 +10,8 @@ use crossterm::style::ContentStyle;
 use crossterm::style::Print;
 use crossterm::style::SetStyle;
 
+
+#[derive(Clone)]
 pub struct Viewport{
     pub pos: (usize, usize),
     pub width: usize,
@@ -52,15 +54,15 @@ pub struct BufferDiff {
     pub style: ContentStyle,
 }
 
-pub struct Buffer {
+pub struct RenderBuffer {
     pub data: Vec<Cell>,
     pub width: usize,
     pub height: usize,
 }
 
-impl Buffer {
-    pub fn new(width: usize, height: usize) -> Buffer {
-        Buffer {
+impl RenderBuffer {
+    pub fn new(width: usize, height: usize) -> RenderBuffer {
+        RenderBuffer {
             data: vec![Cell::new(' ', Color::Red, Color::Red); width * height],
             width,
             height,
@@ -87,7 +89,7 @@ impl Buffer {
         }
     }
     #[deprecated(note = "please use `diff` instead")]
-    pub fn put_diff(&mut self, stdout: &mut impl Write, other: &Buffer) -> anyhow::Result<()> {
+    pub fn put_diff(&mut self, stdout: &mut impl Write, other: &RenderBuffer) -> anyhow::Result<()> {
         assert!(self.width == other.width && self.height == other.height);
         queue!(stdout, cursor::Hide)?;
         for (index, cells) in self
@@ -108,7 +110,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn diff(&mut self, other: &Buffer) -> Vec<BufferDiff> {
+    pub fn diff(&mut self, other: &RenderBuffer) -> Vec<BufferDiff> {
         assert!(self.width == other.width && self.height == other.height);
         let mut result = Vec::new();
         let diffed_cells: Vec<(usize, (&Cell, &Cell))> = self
@@ -158,7 +160,7 @@ impl Buffer {
         result
     }
 
-    pub fn copy_into(&mut self, other: &mut Buffer) {
+    pub fn copy_into(&mut self, other: &mut RenderBuffer) {
         for (i, cell) in self.data.iter_mut().enumerate() {
             other.data[i] = *cell;
         }

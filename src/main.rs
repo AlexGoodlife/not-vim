@@ -10,6 +10,7 @@ use crate::client::Client;
 pub mod client;
 pub mod editor;
 pub mod styles;
+pub mod ui;
 
 
 
@@ -19,6 +20,7 @@ fn main() {
     log_to_file("editor.log", log::LevelFilter::Info).unwrap();
 
     let stdout = stdout();
+
     panic::set_hook(Box::new(|panic_info| {
         // Open the file in append mode
         let mut file = OpenOptions::new()
