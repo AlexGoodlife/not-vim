@@ -6,10 +6,11 @@ A text editor I'm making for fun that is really not like vim at all(it is).
 
 ## Features
    - Edits text
-   - You can move around and stuff
+   - Vim emulation for normal mode and stuff
    - Is fast
 
 ## TODO
+   - [ ] Switch from Vec<String> to a performant data structure (Big refactor)
    - [ ] Syntax highlighting
    - [ ] File manager
    - [ ] Useful features
