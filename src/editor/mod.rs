@@ -17,28 +17,44 @@ pub struct MoveInfo {
 
 impl MoveInfo {
     pub fn is_backwards(&self) -> bool {
-        self.start_pos.1 >= self.end_pos.1 && self.start_pos.0 > self.end_pos.0
+        self.start_pos.1 > self.end_pos.1
+            || (self.start_pos.1 == self.end_pos.1 && self.start_pos.0 >= self.end_pos.0)
     }
 
     // as in, start pos is before end pos
-    pub fn get_ordered(&self) -> Self{
-        if self.is_backwards(){
-            MoveInfo{
+    pub fn get_ordered(&self) -> Self {
+        if self.is_backwards() {
+            MoveInfo {
                 start_pos: self.end_pos,
-                end_pos : self.start_pos,
+                end_pos: self.start_pos,
             }
-        }
-        else{
+        } else {
             self.clone()
+        }
+    }
+
+    pub fn expand_or_shrink(&self, x: usize, y: usize) -> MoveInfo {
+        if x <= self.start_pos.0 && y <= self.start_pos.1 {
+            return MoveInfo {
+                start_pos: (x, y),
+                end_pos: self.end_pos,
+            }
+            .get_ordered();
+        } else {
+            return MoveInfo {
+                start_pos: self.start_pos,
+                end_pos: (x, y),
+            }
+            .get_ordered();
         }
     }
 }
 
-#[derive(PartialEq, Clone)]
-#[derive(Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Mode {
     Normal,
     Insert,
+    Visual,
 }
 
 impl Mode {
@@ -46,6 +62,7 @@ impl Mode {
         match self {
             Self::Normal => "NORMAL".to_string(),
             Self::Insert => "INSERT".to_string(),
+            Self::Visual => "VISUAL".to_string(),
         }
     }
 }
@@ -75,6 +92,9 @@ pub struct Editor {
     pub cursor_pos: (usize, usize), // x, y, collumn, rows
     pub mode: Mode,
     pub message: String,
+    pub curr_selection: Option<((usize,usize),MoveInfo)>, // Selection for visual mode, we put the
+    // starting cursor position and its selection
+    latest_x: Option<usize>, //to make scrolling lines better
 }
 
 impl Editor {
@@ -84,6 +104,8 @@ impl Editor {
             cursor_pos: (0, 0),
             mode: Mode::Normal,
             message: String::new(),
+            curr_selection: None,
+            latest_x: None,
         }
     }
 
@@ -130,8 +152,9 @@ impl Editor {
             .map(|(_, c)| c)
             .collect();
         self.buffer.lines.insert(self.cursor_pos.1 + 1, rest_of_str);
-        self.cursor_pos.1 += 1;
-        self.cursor_pos.0 = 0;
+        self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1 + 1);
+        // self.cursor_pos.1 += 1;
+        // self.cursor_pos.0 = 0;
         self.buffer.has_changes = true;
     }
 
@@ -147,12 +170,19 @@ impl Editor {
             let second_line = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
             let second_line_cursor_pos = self.buffer.lines[second_line].chars().count();
             self.join_lines(second_line, first_line);
-            self.cursor_pos.1 = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
-            self.cursor_pos.0 = if self.cursor_pos.1 == 0 {
-                0
-            } else {
-                second_line_cursor_pos
-            };
+            // self.cursor_pos.1 = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
+            // self.cursor_pos.0 = if self.cursor_pos.1 == 0 {
+            //     0
+            // } else {
+            //     second_line_cursor_pos
+            // };
+            self.move_cursor_to(
+                self.cursor_pos.0,
+                self.cursor_pos.1.checked_sub(1).unwrap_or(0),
+            );
+            if self.cursor_pos.1 != 0 {
+                self.move_cursor_to(second_line_cursor_pos, self.cursor_pos.1);
+            }
         } else {
             self.pop_char();
         }
@@ -180,10 +210,10 @@ impl Editor {
             Some(result) => {
                 line.remove(result.0);
 
-                let value_to_sub = match self.mode == Mode::Normal {
+                let value_to_sub = match self.mode == Mode::Insert {
                     //Insert mode can go a little bit out of the buffer
-                    true => 1,
-                    false => 0,
+                    true => 0,
+                    false => 1,
                 };
 
                 if line.len() > 0 && self.cursor_pos.0 > line.chars().count() - value_to_sub {
@@ -203,8 +233,13 @@ impl Editor {
     pub fn move_cursor_left(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
         for _ in 0..amount {
-            self.cursor_pos.0 = self.cursor_pos.0.checked_sub(1).unwrap_or(0);
+            // self.cursor_pos.0 = self.cursor_pos.0.checked_sub(1).unwrap_or(0);
+            self.move_cursor_to(
+                self.cursor_pos.0.checked_sub(1).unwrap_or(0),
+                self.cursor_pos.1,
+            );
         }
+        self.latest_x = Some(self.cursor_pos.0);
         MoveInfo {
             start_pos: start,
             end_pos: self.cursor_pos,
@@ -213,18 +248,20 @@ impl Editor {
 
     pub fn move_cursor_right(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
-        let value_to_sub = match self.mode == Mode::Normal {
+        let value_to_sub = match self.mode == Mode::Insert {
             //Normal mode can go a little bit out of the buffer
-            true => 1,
-            false => 0,
+            true => 0,
+            false => 1,
         };
         let n = self.buffer.lines[self.cursor_pos.1]
             .chars()
             .count()
             .saturating_sub(value_to_sub);
         for _ in 0..amount {
-            self.cursor_pos.0 = std::cmp::min(self.cursor_pos.0 + 1, n);
+            // self.cursor_pos.0 = std::cmp::min(self.cursor_pos.0 + 1, n);
+            self.move_cursor_to(std::cmp::min(self.cursor_pos.0 + 1, n), self.cursor_pos.1);
         }
+        self.latest_x = Some(self.cursor_pos.0);
         MoveInfo {
             start_pos: start,
             end_pos: self.cursor_pos,
@@ -255,15 +292,15 @@ impl Editor {
         Self::get_shiftwidth(s, index, tabstop) + index + 1
     }
 
-    fn next_line_cursor_index(&mut self, current_y: usize, previous_y: usize) -> usize {
+    fn next_line_cursor_index(&mut self, x: usize, current_y: usize, previous_y: usize) -> usize {
         let normal_len = &self.buffer.lines[current_y].chars().count();
-        let value_to_sub = match self.mode == Mode::Normal {
+        let value_to_sub = match self.mode == Mode::Insert {
             //Insert mode can go a little bit out of the buffer
-            true => 1,
-            false => 0,
+            true => 0,
+            false => 1,
         };
         let cursor_x =
-            Self::length_with_tabs_at(&self.buffer.lines[previous_y], self.cursor_pos.0, TABSTOP)
+            Self::length_with_tabs_at(&self.buffer.lines[previous_y], x, TABSTOP)
                 .saturating_sub(1);
 
         // We need to find the shiftwidth on the cursor_x on the line below us so we can shift
@@ -288,10 +325,17 @@ impl Editor {
     pub fn move_cursor_down(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
         let previous_y = self.cursor_pos.1;
-        self.cursor_pos.1 = std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1);
-        if self.cursor_pos.1 != self.buffer.lines.len() {
+        // self.cursor_pos.1 = std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1);
+        self.move_cursor_to(
+            self.cursor_pos.0,
+            std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1),
+        );
+        if self.cursor_pos.1 != previous_y{
             // If we are not in the very last line
-            self.cursor_pos.0 = self.next_line_cursor_index(self.cursor_pos.1, previous_y);
+            if let Some(previous_x) = self.latest_x {
+                let new_x = self.next_line_cursor_index(previous_x,self.cursor_pos.1, previous_y);
+                self.move_cursor_to(std::cmp::min(previous_x, new_x), self.cursor_pos.1);
+            }
         }
         MoveInfo {
             start_pos: start,
@@ -302,9 +346,13 @@ impl Editor {
     pub fn move_cursor_up(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
         let previous_y = self.cursor_pos.1;
-        self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(amount);
+        // self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(amount);
+        self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1.saturating_sub(amount));
         if previous_y != 0 {
-            self.cursor_pos.0 = self.next_line_cursor_index(self.cursor_pos.1, previous_y);
+            if let Some(previous_x) = self.latest_x {
+                let new_x = self.next_line_cursor_index(previous_x,self.cursor_pos.1, previous_y);
+                self.move_cursor_to(std::cmp::min(previous_x, new_x), self.cursor_pos.1);
+            }
         }
         MoveInfo {
             start_pos: start,
@@ -338,8 +386,12 @@ impl Editor {
                 n -= 1;
             }
         }
-        self.cursor_pos.0 =
-            std::cmp::min(self.cursor_pos.0 + skip_amount, curr_line.chars().count());
+        self.move_cursor_to(
+            std::cmp::min(self.cursor_pos.0 + skip_amount, curr_line.chars().count()),
+            self.cursor_pos.1,
+        );
+        // self.cursor_pos.0 =
+        //     std::cmp::min(self.cursor_pos.0 + skip_amount, curr_line.chars().count());
         MoveInfo {
             start_pos: start,
             end_pos: self.cursor_pos,
@@ -350,19 +402,25 @@ impl Editor {
         let start = self.cursor_pos;
         let mut loop_y = self.cursor_pos.1;
         let mut loop_x = self.cursor_pos.0;
-        let mut result = MoveInfo { 
+        let mut result = MoveInfo {
             start_pos: self.cursor_pos,
             end_pos: self.cursor_pos,
         };
         let mut n = amount;
         // This would be more efficient if we didn't have a Vec<String> but whatever
         while loop_y < self.buffer.lines.len() {
-
             //Handle line_start
-            if loop_x == 0 && loop_y != self.cursor_pos.1 && self.buffer.lines[loop_y].chars().next().map_or(false, |c| !is_seperator(c)){
+            if loop_x == 0
+                && loop_y != self.cursor_pos.1
+                && self.buffer.lines[loop_y]
+                    .chars()
+                    .next()
+                    .map_or(false, |c| !is_seperator(c))
+            {
                 n -= 1;
-                self.cursor_pos.1 = loop_y;
-                self.cursor_pos.0 = loop_x;
+                // self.cursor_pos.1 = loop_y;
+                // self.cursor_pos.0 = loop_x;
+                self.move_cursor_to(loop_x, loop_y);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -370,7 +428,6 @@ impl Editor {
                 if n == 0 {
                     return result;
                 }
-
             }
             let f = self.buffer.lines[loop_y]
                 .chars()
@@ -383,12 +440,12 @@ impl Editor {
                     .chars()
                     .skip(loop_x + found.0 + 1)
                     .take_while(|c| is_seperator(*c))
-                    .count()
-                    ;
+                    .count();
                 let to_skip = found.0 + consumed;
                 n -= 1;
-                self.cursor_pos.1 = loop_y;
-                self.cursor_pos.0 = loop_x + to_skip;
+                // self.cursor_pos.1 = loop_y;
+                // self.cursor_pos.0 = loop_x + to_skip;
+                self.move_cursor_to(loop_x + to_skip, loop_y);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -398,15 +455,22 @@ impl Editor {
                 }
                 loop_x += to_skip;
                 continue;
-            }
-            else {
-                if loop_y == self.buffer.lines.len() -1{ // meaning we are in the last line
-                    self.cursor_pos.0 = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)].chars().count().saturating_sub(1);
-                    self.cursor_pos.1 = loop_y;
-                    return MoveInfo{
-                        start_pos : start,
-                        end_pos : self.cursor_pos,
-                    }
+            } else {
+                if loop_y == self.buffer.lines.len() - 1 {
+                    // meaning we are in the last line
+                    // self.cursor_pos.0 = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)].chars().count().saturating_sub(1);
+                    // self.cursor_pos.1 = loop_y;
+                    self.move_cursor_to(
+                        self.buffer.lines[self.buffer.lines.len().saturating_sub(1)]
+                            .chars()
+                            .count()
+                            .saturating_sub(1),
+                        loop_y,
+                    );
+                    return MoveInfo {
+                        start_pos: start,
+                        end_pos: self.cursor_pos,
+                    };
                 }
             }
             loop_y += 1;
@@ -426,7 +490,6 @@ impl Editor {
         let mut n = amount;
         // This would be more efficient if we didn't have a Vec<String> but whatever
         while loop_y < self.buffer.lines.len() {
-
             let f = self.buffer.lines[loop_y]
                 .chars()
                 .skip(loop_x)
@@ -441,8 +504,9 @@ impl Editor {
                     .count();
                 let to_skip = found.0 + consumed;
                 n -= 1;
-                self.cursor_pos.1 = loop_y;
-                self.cursor_pos.0 = loop_x + to_skip;
+                // self.cursor_pos.1 = loop_y;
+                // self.cursor_pos.0 = loop_x + to_skip;
+                self.move_cursor_to(loop_x + to_skip, loop_y);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -489,8 +553,9 @@ impl Editor {
                     .count();
                 let to_skip = found.0 + consumed;
                 n -= 1;
-                self.cursor_pos.1 = loop_y;
-                self.cursor_pos.0 = loop_x.saturating_sub(to_skip);
+                // self.cursor_pos.1 = loop_y;
+                // self.cursor_pos.0 = loop_x.saturating_sub(to_skip);
+                self.move_cursor_to(loop_x.saturating_sub(to_skip), loop_y);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -500,14 +565,14 @@ impl Editor {
                 }
                 loop_x = loop_x.saturating_sub(to_skip);
                 continue;
-            }
-            else {
+            } else {
                 //Handle case for when we are going back to the beggining of a line, if we didn't
-                //start at the begginng then we want to go there before skipping 
+                //start at the begginng then we want to go there before skipping
                 if loop_x > 0 {
                     n -= 1;
-                    self.cursor_pos.1 = loop_y;
-                    self.cursor_pos.0 = 0;
+                    // self.cursor_pos.1 = loop_y;
+                    // self.cursor_pos.0 = 0;
+                    self.move_cursor_to(0, loop_y);
                     result = MoveInfo {
                         start_pos: start,
                         end_pos: self.cursor_pos,
@@ -528,7 +593,7 @@ impl Editor {
         result
     }
 
-    // Theres alot of edge cases 
+    // Theres alot of edge cases
     pub fn delete_selection(&mut self, movement: MoveInfo) {
         let m = movement.get_ordered();
         let (start_x, start_y) = m.start_pos;
@@ -537,68 +602,71 @@ impl Editor {
         // We just delete from start_x to end_x if it doesn't span any lines
         if start_y == end_y {
             let mut s = String::new();
-            for (i,c) in self.buffer.lines[start_y].chars().enumerate(){
-                if !(i >= start_x && i <= end_x){
-                   s.push(c); 
+            for (i, c) in self.buffer.lines[start_y].chars().enumerate() {
+                if !(i >= start_x && i <= end_x) {
+                    s.push(c);
                 }
             }
             if s.len() == 0 {
                 self.buffer.lines.remove(start_y);
-                self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(1);
-            }
-            else{
+                // self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(1);
+                self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1.saturating_sub(1));
+            } else {
                 self.buffer.lines[start_y] = s;
             }
             return;
         }
 
         //Another edge case, if we are deleting something that spans a single word over line
-        //boundaries then we delete only that one word until the line end 
-
+        //boundaries then we delete only that one word until the line end
 
         //So we can remove everything at once
         let mut remove_indices = Vec::new();
         //We gotta delete the beggining
         {
             let mut s = String::new();
-            for (i,c) in self.buffer.lines[start_y].chars().enumerate(){
-                if !(i >= start_x){
-                   s.push(c); 
+            for (i, c) in self.buffer.lines[start_y].chars().enumerate() {
+                if !(i >= start_x) {
+                    s.push(c);
                 }
             }
             // if s.len() == 0 {
             //     remove_indices.push(start_y);
             // }
             // else{
-                self.buffer.lines[start_y] = s;
+            self.buffer.lines[start_y] = s;
             // }
         }
 
         {
             let mut s = String::new();
-            for (i,c) in self.buffer.lines[end_y].chars().enumerate(){
-                if !(i <= end_x){
-                   s.push(c); 
+            for (i, c) in self.buffer.lines[end_y].chars().enumerate() {
+                if !(i <= end_x) {
+                    s.push(c);
                 }
             }
             // if s.len() == 0 {
             //     remove_indices.push(end_y);
             // }
             // else{
-                self.buffer.lines[end_y] = s;
+            self.buffer.lines[end_y] = s;
             // }
         }
 
         let lines_between = end_y.saturating_sub(start_y).saturating_sub(1);
         for i in 0..lines_between {
-           remove_indices.push(start_y + i + 1);
+            remove_indices.push(start_y + i + 1);
         }
 
         //We sort so we can remove from bottom to top therefore preserving our indices
-        remove_indices.sort_by(|a,b| b.cmp(a));
-        self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(remove_indices.len());
+        remove_indices.sort_by(|a, b| b.cmp(a));
+        // self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(remove_indices.len());
+        self.move_cursor_to(
+            self.cursor_pos.0,
+            self.cursor_pos.1.saturating_sub(remove_indices.len()),
+        );
         for i in remove_indices {
-           self.buffer.lines.remove(i); 
+            self.buffer.lines.remove(i);
         }
 
         //now we gotta join the start and end lines
@@ -611,27 +679,78 @@ impl Editor {
         }
     }
 
-    pub fn move_cursor_to(&mut self, x : usize, y : usize){
-        self.cursor_pos.1 = std::cmp::min(y, self.buffer.lines.len().saturating_sub(1));
-        self.cursor_pos.0  = std::cmp::min(x, self.buffer.lines[self.cursor_pos.1].chars().count().saturating_sub(1));
+    pub fn move_cursor_to(&mut self, x: usize, y: usize) {
+        // let to_sub = if matches!(self.mode, Mode::Insert) { 0} else {1};
+        // self.cursor_pos.1 = std::cmp::min(y, self.buffer.lines.len().saturating_sub(1));
+        // self.cursor_pos.0  = std::cmp::min(x, self.buffer.lines[self.cursor_pos.1].chars().count().saturating_sub(to_sub));
+        self.cursor_pos.0 = x;
+        self.cursor_pos.1 = y;
+        if self.mode == Mode::Visual {
+            if let Some(select) = &self.curr_selection {
+                log::info!(
+                    "x {} y {} selection {:?}",
+                    self.cursor_pos.0,
+                    self.cursor_pos.1,
+                    select
+                );
+
+                self.curr_selection = Some((select.0,MoveInfo {
+                    start_pos: select.0,
+                    end_pos: self.cursor_pos
+                }.get_ordered()));
+                    // Some(select.expand_or_shrink(self.cursor_pos.0, self.cursor_pos.1));
+                log::info!("new selection {:?}", self.curr_selection);
+            }
+        }
     }
 
-    pub fn character_at_cursor(&self) -> char{
-        self.buffer.lines[self.cursor_pos.1].chars().skip(self.cursor_pos.0).next().unwrap_or(' ')
+    pub fn character_at_cursor(&self) -> char {
+        self.buffer.lines[self.cursor_pos.1]
+            .chars()
+            .skip(self.cursor_pos.0)
+            .next()
+            .unwrap_or(' ')
     }
 
     pub fn delete_lines(&mut self, movement: MoveInfo) {
         let m = movement.get_ordered();
-        let (_, start_y ) = m.start_pos;
+        let (_, start_y) = m.start_pos;
 
         let num_lines = m.end_pos.1.saturating_sub(start_y) + 1;
-        for _ in 0..num_lines{
+        for _ in 0..num_lines {
             if self.buffer.lines.len() == 1 {
                 // We have deleted essentially everything
                 self.buffer.lines[0] = String::new();
                 break;
             }
             self.buffer.lines.remove(start_y);
+        }
+    }
+
+    pub fn switch_mode(&mut self, new_mode: Mode) {
+        match new_mode {
+            Mode::Normal => {
+                if self.mode == Mode::Insert {
+                    self.move_cursor_left(1);
+                    self.move_cursor_left(1);
+                    self.mode = Mode::Normal;
+                    self.move_cursor_right(1);
+                } else {
+                    self.mode = Mode::Normal;
+                }
+                self.curr_selection = None;
+            }
+            Mode::Insert => {
+                self.mode = Mode::Insert;
+                self.curr_selection = None;
+            }
+            Mode::Visual => {
+                self.mode = Mode::Visual;
+                self.curr_selection = Some((self.cursor_pos,MoveInfo {
+                    start_pos: self.cursor_pos,
+                    end_pos: self.cursor_pos,
+                }))
+            }
         }
     }
 }

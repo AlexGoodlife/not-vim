@@ -19,6 +19,25 @@ pub fn default_text_style() -> ContentStyle {
     }
 }
 
+pub fn highlighted_text() -> ContentStyle {
+    let attr = Attributes::default();
+    // attr.set(Attribute::Reset);
+    ContentStyle {
+        foreground_color: Some(Color::Rgb {
+            r: 215,
+            g: 215,
+            b: 215,
+        }),
+        background_color: Some(Color::Rgb{
+            r: 41,
+            g: 120,
+            b: 255,
+        }),
+        underline_color: None,
+        attributes: attr,
+    }
+}
+
 pub fn default_line_number_style() -> ContentStyle {
     let attr = Attributes::default();
     // attr.set(Attribute::Reset);
@@ -49,6 +68,11 @@ pub fn gutter_style(mode: &Mode) -> ContentStyle {
             g: 163,
             b: 108,
         }),
+        Mode::Visual => Some(Color::Rgb {
+            r: 160,
+            g: 32,
+            b: 140,
+        }),
     };
     ContentStyle {
         foreground_color: color,
@@ -71,6 +95,11 @@ pub fn mode_style(mode: &Mode) -> ContentStyle {
             r: 0,
             g: 163,
             b: 108,
+        }),
+        Mode::Visual => Some(Color::Rgb {
+            r: 160,
+            g: 32,
+            b: 140,
         }),
     };
     ContentStyle {

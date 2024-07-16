@@ -76,6 +76,18 @@ impl RenderBuffer {
         }
     }
 
+    pub fn put_cells(&mut self, cells: &Vec<Cell>, pos: (usize,usize), viewport: &Viewport){
+        for (i, c) in cells.iter().enumerate() {
+            let x = std::cmp::min(self.width - 1, pos.0 + viewport.pos.0);
+            let y = std::cmp::min(self.height - 1, pos.1 + viewport.pos.1);
+            if x + i >= self.width  || x + i >= x + viewport.width{
+                break;
+            }; // Don't render anything that isn't going to be seen
+            let index = y * self.width + x + i;
+            self.data[index] = *c;
+        }
+    }
+
     pub fn put_str(&mut self, data: &str, pos: (usize, usize), style: ContentStyle, viewport: &Viewport) {
         //TODO deal with lines that are too big for buffer, do we wrap or do we scroll sideways? If so we need to know where to wrap, that also complicates cursor stuff
         for (i, c) in data.chars().enumerate() {
@@ -203,7 +215,7 @@ impl TextBuffer {
 
     pub fn new(path: &str) -> TextBuffer {
         TextBuffer {
-            lines: Vec::new(),
+            lines: vec![String::new();1],
             path: path.to_owned(),
             bytes_len: 0,
             has_changes: false,

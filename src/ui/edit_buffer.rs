@@ -8,10 +8,10 @@ use crossterm::{
 const INSERT_TABS: bool = true;
 use crate::{
     editor::{
-        buffer::{RenderBuffer, Viewport},
+        buffer::{Cell, RenderBuffer, Viewport},
         is_seperator, Editor, Mode, MoveInfo, TABSTOP,
     },
-    styles::{default_line_number_style, default_text_style},
+    styles::{default_line_number_style, default_text_style, highlighted_text},
 };
 
 use super::Component;
@@ -23,6 +23,9 @@ enum Action {
     // can be sure what to do with the info
     ChangeUnresolved,
     Change(Box<Action>, MoveInfo),
+
+    CenterUnresolved,
+    Center(Box<Action>, MoveInfo),
 
     MoveForward,
     MoveBackwards,
@@ -63,6 +66,7 @@ impl Action {
         match a {
             Self::DeleteUnresolved => Self::Delete(Box::new(action), movement),
             Self::ChangeUnresolved => Self::Change(Box::new(action), movement),
+            Self::CenterUnresolved => Self::Center(Box::new(action), movement),
             _ => a.clone(),
         }
     }
@@ -101,6 +105,24 @@ impl EditorBuffer {
             repeater: None,
         }
     }
+
+    fn is_in_selection(x: usize, y: usize, selection: &MoveInfo) -> bool {
+        // if x == 1 && y == 0 {
+        //     log::info!("x {} y {} selection {:?}", x, y, selection);
+        // }
+        let (start_x, start_y) = selection.start_pos;
+        let (end_x, end_y) = selection.end_pos;
+        if start_y == end_y {
+            return y == start_y && (x >= start_x && x <= end_x);
+        }
+        if y == start_y {
+            return x >= start_x;
+        }
+        if y == end_y {
+            return x <= end_x;
+        }
+        y > start_y && y < end_y
+    }
     pub fn draw_lines(&mut self, render_buffer: &mut RenderBuffer, editor: &mut Editor) {
         for (i, line) in editor.buffer.lines.iter().skip(self.top_index).enumerate() {
             if i >= self.viewport.height as usize {
@@ -111,26 +133,36 @@ impl EditorBuffer {
             // counting string length everytime
             let mut s = String::new();
             let mut size = 0;
-            for c in line.chars() {
+            let mut cells: Vec<Cell> = Vec::new();
+            let l = if line.len() == 0 { " " } else { line }; //  to render empty lines in visual mode
+            for (x, c) in l.chars().enumerate() {
+                let style = match &editor.curr_selection {
+                    Some(selection) => {
+                        if Self::is_in_selection(x, i + self.top_index, &selection.1) {
+                            highlighted_text()
+                        } else {
+                            default_text_style()
+                        }
+                    }
+                    None => default_text_style(),
+                };
                 if c == '\t' {
                     for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
+                        cells.push(Cell::with_style(' ', style));
                         s.push(' ');
                         size += 1;
                     }
                 } else {
+                    cells.push(Cell::with_style(c, style));
                     s.push(c);
                     size += 1;
                 }
             }
-            // We now skip the string its appropriate left_offset, we always have to calculate it
-            // like this to avoid cases because of tabs
-            let skipped_string: String = s.chars().skip(self.side_scroll).collect::<String>();
-            render_buffer.put_str(
-                &skipped_string,
-                (self.left_offset, i),
-                default_text_style(),
-                &self.viewport,
-            );
+            let skipped = cells
+                .into_iter()
+                .skip(self.side_scroll)
+                .collect::<Vec<Cell>>();
+            render_buffer.put_cells(&skipped, (self.left_offset, i), &self.viewport);
         }
     }
 
@@ -214,22 +246,19 @@ impl EditorBuffer {
                     .expect("Refactor this out later");
                 None
             }
+            Action::Center(ref a, ref movement) => {
+                if matches!(**a, Action::MoveUp | Action::MoveDown | Action::ActOnSelf) {
+                    let to_center = movement.end_pos.1;
+                    self.top_index = to_center.saturating_sub(self.viewport.height / 2);
+                }
+                None
+            }
             Action::PutNewlineInsert => {
                 editor.put_newline();
                 None
             }
             Action::SwitchMode(ref mode) => {
-                match mode {
-                    Mode::Normal => {
-                        editor.move_cursor_left(1);
-                        editor.move_cursor_left(1);
-                        editor.mode = Mode::Normal;
-                        editor.move_cursor_right(1);
-                    }
-                    Mode::Insert => {
-                        editor.mode = Mode::Insert;
-                    }
-                }
+                editor.switch_mode(mode.clone());
                 None
             }
             Action::WriteCurrentBuffer => {
@@ -242,6 +271,7 @@ impl EditorBuffer {
             | Action::MoveUntilUnresolved
             | Action::DeleteUnresolved
             | Action::ChangeUnresolved
+            | Action::CenterUnresolved
             | Action::None => None,
         }
     }
@@ -471,15 +501,32 @@ impl EditorBuffer {
                 self.waiting_input = None;
                 self.waiting_action = None;
                 self.repeater = None;
+                self.handle_motions(
+                    stdout,
+                    editor,
+                    Motion::Single(Action::SwitchMode(Mode::Normal)),
+                );
             }
-            // KeyEvent {
-            //     code: KeyCode::Char('q'),
-            //     modifiers: KeyModifiers::CONTROL,
-            //     kind: KeyEventKind::Press,
-            //     state: KeyEventState::NONE,
-            // } => {
-            //     self.quit = true;
-            // }
+            KeyEvent {
+                code: KeyCode::Char('v'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_motions(
+                    stdout,
+                    editor,
+                    Motion::Single(Action::SwitchMode(Mode::Visual)),
+                );
+            }
+            KeyEvent {
+                code: KeyCode::Char('z'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_waiting_command(stdout, editor, Action::CenterUnresolved);
+            }
             KeyEvent {
                 code: KeyCode::Char('f'),
                 modifiers: KeyModifiers::NONE,
@@ -735,6 +782,7 @@ impl Component for EditorBuffer {
             Event::Key(ev) => match editor.mode {
                 Mode::Normal => self.handle_normal_keys(&mut (*stdout), editor, ev)?,
                 Mode::Insert => self.handle_insert_keys(&mut (*stdout), editor, ev)?,
+                Mode::Visual => self.handle_normal_keys(&mut (*stdout), editor, ev)?,
             },
             _ => {}
         }
