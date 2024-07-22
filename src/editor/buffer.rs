@@ -10,14 +10,12 @@ use crossterm::style::ContentStyle;
 use crossterm::style::Print;
 use crossterm::style::SetStyle;
 
-
 #[derive(Clone)]
-pub struct Viewport{
+pub struct Viewport {
     pub pos: (usize, usize),
     pub width: usize,
     pub height: usize,
 }
-
 
 #[derive(Clone, Copy)]
 pub struct Cell {
@@ -48,6 +46,7 @@ impl Cell {
     }
 }
 
+#[derive(Debug)]
 pub struct BufferDiff {
     pub content: String,
     pub pos: (usize, usize),
@@ -76,11 +75,11 @@ impl RenderBuffer {
         }
     }
 
-    pub fn put_cells(&mut self, cells: &Vec<Cell>, pos: (usize,usize), viewport: &Viewport){
+    pub fn put_cells(&mut self, cells: &Vec<Cell>, pos: (usize, usize), viewport: &Viewport) {
         for (i, c) in cells.iter().enumerate() {
             let x = std::cmp::min(self.width - 1, pos.0 + viewport.pos.0);
             let y = std::cmp::min(self.height - 1, pos.1 + viewport.pos.1);
-            if x + i >= self.width  || x + i >= x + viewport.width{
+            if x + i >= self.width || x + i >= x + viewport.width {
                 break;
             }; // Don't render anything that isn't going to be seen
             let index = y * self.width + x + i;
@@ -88,12 +87,18 @@ impl RenderBuffer {
         }
     }
 
-    pub fn put_str(&mut self, data: &str, pos: (usize, usize), style: ContentStyle, viewport: &Viewport) {
+    pub fn put_str(
+        &mut self,
+        data: &str,
+        pos: (usize, usize),
+        style: ContentStyle,
+        viewport: &Viewport,
+    ) {
         //TODO deal with lines that are too big for buffer, do we wrap or do we scroll sideways? If so we need to know where to wrap, that also complicates cursor stuff
         for (i, c) in data.chars().enumerate() {
             let x = std::cmp::min(self.width - 1, pos.0 + viewport.pos.0);
             let y = std::cmp::min(self.height - 1, pos.1 + viewport.pos.1);
-            if x + i >= self.width  || x + i >= x + viewport.width{
+            if x + i >= self.width || x + i >= x + viewport.width {
                 break;
             }; // Don't render anything that isn't going to be seen
             let index = y * self.width + x + i;
@@ -101,7 +106,11 @@ impl RenderBuffer {
         }
     }
     #[deprecated(note = "please use `diff` instead")]
-    pub fn put_diff(&mut self, stdout: &mut impl Write, other: &RenderBuffer) -> anyhow::Result<()> {
+    pub fn put_diff(
+        &mut self,
+        stdout: &mut impl Write,
+        other: &RenderBuffer,
+    ) -> anyhow::Result<()> {
         assert!(self.width == other.width && self.height == other.height);
         queue!(stdout, cursor::Hide)?;
         for (index, cells) in self
@@ -125,14 +134,22 @@ impl RenderBuffer {
     pub fn diff(&mut self, other: &RenderBuffer) -> Vec<BufferDiff> {
         assert!(self.width == other.width && self.height == other.height);
         let mut result = Vec::new();
-        let diffed_cells: Vec<(usize, (&Cell, &Cell))> = self
-            .data
-            .iter()
-            .zip(other.data.iter())
-            .enumerate()
-            .filter(|(_, (curr_cell, other_cell))| **curr_cell != **other_cell)
-            .collect();
+        // let diffed_cells: Vec<(usize, (&Cell, &Cell))> = self
+        //     .data
+        //     .iter()
+        //     .zip(other.data.iter())
+        //     .enumerate()
+        //     .filter(|(_, (curr_cell, other_cell))| **curr_cell != **other_cell)
+        //     .collect();
+        let mut diffed_cells = Vec::new();
 
+        for i in 0..self.data.len() {
+            let curr_cell = self.data[i];
+            let other_cell = other.data[i];
+            if  curr_cell != other_cell {
+                diffed_cells.push((i,(curr_cell,other_cell)));
+            }
+        }
         // Go along the cells and accumualte cells with same style that are one after the other so
         // we can save on calls to move cursor and set style
         let n = diffed_cells.len();
@@ -171,6 +188,25 @@ impl RenderBuffer {
         }
         result
     }
+    // pub fn diff(&mut self, other: &RenderBuffer) -> Vec<BufferDiff> {
+    //     assert!(self.width == other.width && self.height == other.height);
+    //     self
+    //         .data
+    //         .iter()
+    //         .zip(other.data.iter())
+    //         .enumerate()
+    //         .filter(|(_, (curr_cell, other_cell))| **curr_cell != **other_cell)
+    //         .map(|(index, (_, other_cell))| {
+    //             let x = (index % self.width).try_into().unwrap();
+    //             let y = (index / self.width).try_into().unwrap();
+    //             BufferDiff{
+    //                 content: other_cell.character.to_string(),
+    //                 pos: (x,y),
+    //                 style: other_cell.style,
+    //             }
+    //         }).collect::<Vec<BufferDiff>>()
+    //
+    // }
 
     pub fn copy_into(&mut self, other: &mut RenderBuffer) {
         for (i, cell) in self.data.iter_mut().enumerate() {
@@ -189,7 +225,7 @@ pub struct TextBuffer {
     pub lines: Vec<String>,
     pub path: String,
     pub bytes_len: usize,
-    pub has_changes : bool,
+    pub has_changes: bool,
 }
 
 impl TextBuffer {
@@ -215,14 +251,14 @@ impl TextBuffer {
 
     pub fn new(path: &str) -> TextBuffer {
         TextBuffer {
-            lines: vec![String::new();1],
+            lines: vec![String::new(); 1],
             path: path.to_owned(),
             bytes_len: 0,
             has_changes: false,
         }
     }
 
-    pub fn write_to_file(&mut self) -> anyhow::Result<(usize,usize)> {
+    pub fn write_to_file(&mut self) -> anyhow::Result<(usize, usize)> {
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)

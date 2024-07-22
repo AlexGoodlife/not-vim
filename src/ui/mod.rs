@@ -95,7 +95,7 @@ impl Component for Gutter {
         buffer.put_str(
             &name,
             (mode_len + 1, 0),
-            default_text_style(),
+            default_text_style(false),
             &self.gutter_viewport,
         );
         buffer.put_str(
@@ -166,7 +166,7 @@ impl Component for MessagesComponent {
         buffer.put_str(
             &editor.message,
             (0, 0),
-            default_text_style(),
+            default_text_style(false),
             &self.viewport,
         );
     }

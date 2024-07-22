@@ -1,12 +1,42 @@
 pub mod buffer;
 
+use std::error::Error;
+
+use copypasta::{ClipboardContext, ClipboardProvider};
 use crate::editor::buffer::TextBuffer;
 
+pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync + 'static>>;
 const DEFAULT_FILE_PATH: &str = "default.txt";
 pub(crate) const TABSTOP: usize = 2;
 
 pub fn is_seperator(c: char) -> bool {
     !c.is_alphanumeric() || c.is_whitespace()
+}
+
+struct DefaultClipboard{
+    data : Vec<String>,
+}
+
+impl DefaultClipboard{
+    pub fn new() -> Self {
+        DefaultClipboard{
+            data: Vec::new()
+        }
+    }
+}
+
+impl ClipboardProvider for DefaultClipboard{
+    fn get_contents(&mut self) -> Result<String> {
+        Ok(self.data.join("\n"))
+    }
+
+    fn set_contents(&mut self, contents: String) -> Result<()> {
+        let split = contents.split('\n');
+        for s in split.into_iter(){
+            self.data.push(s.to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,13 +122,15 @@ pub struct Editor {
     pub cursor_pos: (usize, usize), // x, y, collumn, rows
     pub mode: Mode,
     pub message: String,
-    pub curr_selection: Option<((usize,usize),MoveInfo)>, // Selection for visual mode, we put the
+    pub curr_selection: Option<((usize, usize), MoveInfo)>, // Selection for visual mode, we put the
     // starting cursor position and its selection
     latest_x: Option<usize>, //to make scrolling lines better
+    clipboard: Box<dyn ClipboardProvider>,
 }
 
 impl Editor {
     pub fn new() -> Editor {
+        let clipboard = DefaultClipboard::new();
         Editor {
             buffer: TextBuffer::new(DEFAULT_FILE_PATH),
             cursor_pos: (0, 0),
@@ -106,6 +138,7 @@ impl Editor {
             message: String::new(),
             curr_selection: None,
             latest_x: None,
+            clipboard : Box::new(clipboard),
         }
     }
 
@@ -152,7 +185,7 @@ impl Editor {
             .map(|(_, c)| c)
             .collect();
         self.buffer.lines.insert(self.cursor_pos.1 + 1, rest_of_str);
-        self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1 + 1);
+        self.move_cursor_to(0, self.cursor_pos.1 + 1);
         // self.cursor_pos.1 += 1;
         // self.cursor_pos.0 = 0;
         self.buffer.has_changes = true;
@@ -217,7 +250,7 @@ impl Editor {
                 };
 
                 if line.len() > 0 && self.cursor_pos.0 > line.chars().count() - value_to_sub {
-                    // self.move_cursor_left()
+                    self.move_cursor_left(1);
                 }
             }
             None => {
@@ -300,8 +333,7 @@ impl Editor {
             false => 1,
         };
         let cursor_x =
-            Self::length_with_tabs_at(&self.buffer.lines[previous_y], x, TABSTOP)
-                .saturating_sub(1);
+            Self::length_with_tabs_at(&self.buffer.lines[previous_y], x, TABSTOP).saturating_sub(1);
 
         // We need to find the shiftwidth on the cursor_x on the line below us so we can shift
         // accordingly, this is because a line under can have any arbitrary number of \t on any
@@ -330,10 +362,10 @@ impl Editor {
             self.cursor_pos.0,
             std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1),
         );
-        if self.cursor_pos.1 != previous_y{
+        if self.cursor_pos.1 != previous_y {
             // If we are not in the very last line
             if let Some(previous_x) = self.latest_x {
-                let new_x = self.next_line_cursor_index(previous_x,self.cursor_pos.1, previous_y);
+                let new_x = self.next_line_cursor_index(previous_x, self.cursor_pos.1, previous_y);
                 self.move_cursor_to(std::cmp::min(previous_x, new_x), self.cursor_pos.1);
             }
         }
@@ -350,7 +382,7 @@ impl Editor {
         self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1.saturating_sub(amount));
         if previous_y != 0 {
             if let Some(previous_x) = self.latest_x {
-                let new_x = self.next_line_cursor_index(previous_x,self.cursor_pos.1, previous_y);
+                let new_x = self.next_line_cursor_index(previous_x, self.cursor_pos.1, previous_y);
                 self.move_cursor_to(std::cmp::min(previous_x, new_x), self.cursor_pos.1);
             }
         }
@@ -421,6 +453,7 @@ impl Editor {
                 // self.cursor_pos.1 = loop_y;
                 // self.cursor_pos.0 = loop_x;
                 self.move_cursor_to(loop_x, loop_y);
+                self.latest_x = Some(loop_x);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -440,12 +473,14 @@ impl Editor {
                     .chars()
                     .skip(loop_x + found.0 + 1)
                     .take_while(|c| is_seperator(*c))
-                    .count();
+                    .count()
+                    + 1;
                 let to_skip = found.0 + consumed;
                 n -= 1;
                 // self.cursor_pos.1 = loop_y;
                 // self.cursor_pos.0 = loop_x + to_skip;
                 self.move_cursor_to(loop_x + to_skip, loop_y);
+                self.latest_x = Some(loop_x + to_skip);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -460,13 +495,13 @@ impl Editor {
                     // meaning we are in the last line
                     // self.cursor_pos.0 = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)].chars().count().saturating_sub(1);
                     // self.cursor_pos.1 = loop_y;
-                    self.move_cursor_to(
-                        self.buffer.lines[self.buffer.lines.len().saturating_sub(1)]
-                            .chars()
-                            .count()
-                            .saturating_sub(1),
-                        loop_y,
-                    );
+                    let new_x = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)]
+                        .chars()
+                        .count()
+                        .saturating_sub(1);
+
+                    self.latest_x = Some(new_x);
+                    self.move_cursor_to(new_x, loop_y);
                     return MoveInfo {
                         start_pos: start,
                         end_pos: self.cursor_pos,
@@ -507,6 +542,7 @@ impl Editor {
                 // self.cursor_pos.1 = loop_y;
                 // self.cursor_pos.0 = loop_x + to_skip;
                 self.move_cursor_to(loop_x + to_skip, loop_y);
+                self.latest_x = Some(loop_x + to_skip);
                 result = MoveInfo {
                     start_pos: start,
                     end_pos: self.cursor_pos,
@@ -694,11 +730,15 @@ impl Editor {
                     select
                 );
 
-                self.curr_selection = Some((select.0,MoveInfo {
-                    start_pos: select.0,
-                    end_pos: self.cursor_pos
-                }.get_ordered()));
-                    // Some(select.expand_or_shrink(self.cursor_pos.0, self.cursor_pos.1));
+                self.curr_selection = Some((
+                    select.0,
+                    MoveInfo {
+                        start_pos: select.0,
+                        end_pos: self.cursor_pos,
+                    }
+                    .get_ordered(),
+                ));
+                // Some(select.expand_or_shrink(self.cursor_pos.0, self.cursor_pos.1));
                 log::info!("new selection {:?}", self.curr_selection);
             }
         }
@@ -746,11 +786,54 @@ impl Editor {
             }
             Mode::Visual => {
                 self.mode = Mode::Visual;
-                self.curr_selection = Some((self.cursor_pos,MoveInfo {
-                    start_pos: self.cursor_pos,
-                    end_pos: self.cursor_pos,
-                }))
+                self.curr_selection = Some((
+                    self.cursor_pos,
+                    MoveInfo {
+                        start_pos: self.cursor_pos,
+                        end_pos: self.cursor_pos,
+                    },
+                ))
             }
         }
     }
+
+    pub fn move_to_end(&mut self) -> MoveInfo{
+        let start_pos = self.cursor_pos;
+        let new_x = self.buffer.lines[self.cursor_pos.1].chars().count() - 1;
+        self.move_cursor_to(new_x, self.cursor_pos.1);
+        self.latest_x = Some(new_x);
+        MoveInfo{
+            start_pos,
+            end_pos: self.cursor_pos,
+        }
+    }
+
+    pub fn copy(&mut self, selection: MoveInfo) {
+        // This doesn't handle movements that are multi line spanning
+        let content = self.buffer.lines[selection.start_pos.1].chars().skip(selection.start_pos.0).take(selection.end_pos.0).collect();
+        self.clipboard.set_contents(content).unwrap();
+
+    }
+    pub fn copy_lines(&mut self, movement: MoveInfo) {
+        let m = movement.get_ordered();
+        let (_, start_y) = m.start_pos;
+
+        let num_lines = m.end_pos.1.saturating_sub(start_y) + 1;
+        let mut contents = Vec::new();
+        for i in 0..num_lines {
+            contents.push(self.buffer.lines[start_y + i].to_string());
+        }
+        self.clipboard.set_contents(contents.join("\n")).unwrap();
+
+    }
+
+    pub fn paste(&mut self){
+        // paste is a bit more complicated than this
+        let binding = self.clipboard.get_contents().unwrap();
+        let contents =  binding.split('\n').rev();
+        for s in contents{
+            self.buffer.lines.insert(self.cursor_pos.1,s.to_string());
+        }
+    }
+
 }

@@ -141,14 +141,14 @@ impl Client {
     }
 
     fn update_components(&mut self) {
+        let (new_x, new_y) =
+        self.ui_components[self.active_compontent_index].update_cursor(&mut self.editor);
         for c in self.ui_components.iter_mut() {
             c.draw(&mut self.next_buffer, &mut self.editor)
         }
         let current_component = &self.ui_components[self.active_compontent_index];
         let (viewport_x, viewport_y) = current_component.get_viewport().pos;
 
-        let (new_x, new_y) =
-            self.ui_components[self.active_compontent_index].update_cursor(&mut self.editor);
         self.cursor_pos.0 = viewport_x as u16 + new_x;
         self.cursor_pos.1 = viewport_y as u16 + new_y;
     }

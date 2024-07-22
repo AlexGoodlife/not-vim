@@ -9,7 +9,7 @@ const INSERT_TABS: bool = true;
 use crate::{
     editor::{
         buffer::{Cell, RenderBuffer, Viewport},
-        is_seperator, Editor, Mode, MoveInfo, TABSTOP,
+        Editor, Mode, MoveInfo, TABSTOP,
     },
     styles::{default_line_number_style, default_text_style, highlighted_text},
 };
@@ -23,6 +23,9 @@ enum Action {
     // can be sure what to do with the info
     ChangeUnresolved,
     Change(Box<Action>, MoveInfo),
+
+    CopyUnresolved,
+    Copy(Box<Action>, MoveInfo),
 
     CenterUnresolved,
     Center(Box<Action>, MoveInfo),
@@ -48,6 +51,11 @@ enum Action {
     InsertChar(char),
     SwitchMode(Mode),
     ActOnSelf, // Auxiliary action for commands
+    DeleteVisualMode,
+    ChangeVisualMode,
+    MoveEndOfLine,
+    AppendEndOfLine,
+    Paste,
 }
 
 impl Action {
@@ -67,6 +75,7 @@ impl Action {
             Self::DeleteUnresolved => Self::Delete(Box::new(action), movement),
             Self::ChangeUnresolved => Self::Change(Box::new(action), movement),
             Self::CenterUnresolved => Self::Center(Box::new(action), movement),
+            Self::CopyUnresolved => Self::Copy(Box::new(action), movement),
             _ => a.clone(),
         }
     }
@@ -124,6 +133,8 @@ impl EditorBuffer {
         y > start_y && y < end_y
     }
     pub fn draw_lines(&mut self, render_buffer: &mut RenderBuffer, editor: &mut Editor) {
+            //Fill current_line with different highlight
+            render_buffer.put_str(&" ".repeat(self.viewport.width.saturating_sub(self.left_offset)), (self.left_offset,editor.cursor_pos.1.saturating_sub(self.top_index)), default_text_style(true), &self.viewport);
         for (i, line) in editor.buffer.lines.iter().skip(self.top_index).enumerate() {
             if i >= self.viewport.height as usize {
                 break;
@@ -135,16 +146,19 @@ impl EditorBuffer {
             let mut size = 0;
             let mut cells: Vec<Cell> = Vec::new();
             let l = if line.len() == 0 { " " } else { line }; //  to render empty lines in visual mode
+
+
+
             for (x, c) in l.chars().enumerate() {
                 let style = match &editor.curr_selection {
                     Some(selection) => {
                         if Self::is_in_selection(x, i + self.top_index, &selection.1) {
                             highlighted_text()
                         } else {
-                            default_text_style()
+                            default_text_style(i + self.top_index == editor.cursor_pos.1)
                         }
                     }
-                    None => default_text_style(),
+                    None => default_text_style(i + self.top_index == editor.cursor_pos.1),
                 };
                 if c == '\t' {
                     for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
@@ -177,7 +191,7 @@ impl EditorBuffer {
             let padding = self.left_offset - 3;
             let padded = format!("{:>padding$} │ ", num_str);
 
-            render_buffer.put_str(&padded, (0, i), default_line_number_style(), &self.viewport);
+            render_buffer.put_str(&padded, (0, i), default_line_number_style(i + self.top_index == editor.cursor_pos.1), &self.viewport);
         }
     }
 
@@ -203,11 +217,12 @@ impl EditorBuffer {
             Action::MoveUntil(c) => Some(editor.move_to(c, amount, 0)),
             Action::MoveWord => {
                 //This hack is necessary
-                let r = Some(editor.move_word(amount));
-                if editor.cursor_pos.0 != 0 || is_seperator(editor.character_at_cursor()) {
-                    editor.move_cursor_right(1);
-                }
-                return r;
+                // let r = Some(editor.move_word(amount));
+                // if editor.cursor_pos.0 != 0 || is_seperator(editor.character_at_cursor()) {
+                // editor.move_cursor_right(1);
+                // }
+                // return r;
+                return Some(editor.move_word(amount));
             }
             Action::MoveEndWord => Some(editor.move_end_word(amount)),
             Action::MoveBackWord => Some(editor.move_end_word_backwards(amount)),
@@ -223,6 +238,21 @@ impl EditorBuffer {
                 editor.put_char(c);
                 None
             }
+            Action::Paste => {
+                editor.paste();
+                None
+            },
+            Action::Copy(ref a, ref movement) => {
+                let m = movement.get_ordered();
+                if matches!(**a, Action::MoveUp | Action::MoveDown | Action::ActOnSelf) {
+                    editor.copy_lines(m.clone());
+                } else {
+                    editor.copy(movement.clone());
+                }
+                editor.move_cursor_to(m.start_pos.0, m.start_pos.1);
+                None
+
+            },
             Action::Delete(ref a, ref movement) => {
                 let m = movement.get_ordered();
                 if matches!(**a, Action::MoveUp | Action::MoveDown | Action::ActOnSelf) {
@@ -267,12 +297,40 @@ impl EditorBuffer {
                     .expect("Writing to buffer failed");
                 None
             }
+            Action::DeleteVisualMode => {
+                if let Some(selection) = &editor.curr_selection {
+                    let (x, y) = selection.0;
+                    editor.delete_selection(selection.1.clone());
+                    editor.switch_mode(Mode::Normal);
+                    editor.move_cursor_to(x, y);
+                }
+                None
+            }
+            Action::ChangeVisualMode => {
+                if let Some(selection) = &editor.curr_selection {
+                    let (x, y) = selection.0;
+                    editor.delete_selection(selection.1.clone());
+                    editor.switch_mode(Mode::Insert);
+                    editor.move_cursor_to(x, y);
+                }
+                None
+            }
             Action::MoveToUnresolved
             | Action::MoveUntilUnresolved
             | Action::DeleteUnresolved
             | Action::ChangeUnresolved
             | Action::CenterUnresolved
+            | Action::CopyUnresolved
             | Action::None => None,
+            Action::MoveEndOfLine => {
+                Some(editor.move_to_end())
+            },
+            Action::AppendEndOfLine => {
+                editor.move_to_end();
+                editor.switch_mode(Mode::Insert);
+                editor.move_cursor_right(1);
+                None
+            },
         }
     }
 
@@ -520,6 +578,22 @@ impl EditorBuffer {
                 );
             }
             KeyEvent {
+                code: KeyCode::Char('y'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_waiting_command(stdout,editor,Action::CopyUnresolved);
+            }
+            KeyEvent {
+                code: KeyCode::Char('p'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_motions(stdout,editor,Motion::Single(Action::Paste));
+            }
+            KeyEvent {
                 code: KeyCode::Char('z'),
                 modifiers: KeyModifiers::NONE,
                 kind: KeyEventKind::Press,
@@ -597,6 +671,15 @@ impl EditorBuffer {
                 queue!(stdout, crossterm::cursor::SetCursorStyle::BlinkingBar)?
             }
             KeyEvent {
+                code: KeyCode::Char('A'),
+                modifiers: KeyModifiers::SHIFT,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_motions(stdout,editor,Motion::Single(Action::AppendEndOfLine));
+                queue!(stdout, crossterm::cursor::SetCursorStyle::BlinkingBar)?
+            }
+            KeyEvent {
                 code: KeyCode::Char('a'),
                 modifiers: KeyModifiers::NONE,
                 kind: KeyEventKind::Press,
@@ -648,7 +731,11 @@ impl EditorBuffer {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.handle_waiting_command(stdout, editor, Action::DeleteUnresolved);
+                if editor.mode == Mode::Visual {
+                    self.handle_motions(stdout, editor, Motion::Single(Action::DeleteVisualMode));
+                } else {
+                    self.handle_waiting_command(stdout, editor, Action::DeleteUnresolved);
+                }
             }
             KeyEvent {
                 code: KeyCode::Char('c'),
@@ -656,7 +743,19 @@ impl EditorBuffer {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.handle_waiting_command(stdout, editor, Action::ChangeUnresolved);
+                if editor.mode == Mode::Visual {
+                    self.handle_motions(stdout, editor, Motion::Single(Action::ChangeVisualMode));
+                } else {
+                    self.handle_waiting_command(stdout, editor, Action::ChangeUnresolved);
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('$'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_motions(stdout,editor,Motion::Single(Action::MoveEndOfLine));
             }
             KeyEvent {
                 code: KeyCode::Char(c),
@@ -688,6 +787,10 @@ impl EditorBuffer {
     }
 
     fn handle_waiting_command(&mut self, stdout: &mut impl Write, editor: &mut Editor, a: Action) {
+        if editor.mode == Mode::Visual {
+            // No motions like this in visual mode
+            return;
+        }
         if let Some(action) = &self.waiting_action {
             if a == action.1 {
                 return self.handle_motions(stdout, editor, Motion::Single(Action::ActOnSelf));
@@ -707,13 +810,13 @@ impl Component for EditorBuffer {
         // let (client_x, client_y) = self.cursor_pos;
         let viewport_height = (self.viewport.height).saturating_sub(1);
         let viewport_width = (self.viewport.width).saturating_sub(1);
-        if editor_y >= viewport_height + self.top_index {
+        if editor_y >= viewport_height*3/4 + self.top_index {
             // We need to scroll down
-            self.top_index += editor_y - (viewport_height + self.top_index);
+            self.top_index += editor_y - (viewport_height*3/4 + self.top_index);
         }
-        if editor_y < self.top_index {
+        if editor_y < self.top_index + viewport_height*1/4 {
             // We need to scroll up
-            self.top_index -= self.top_index - editor_y;
+            self.top_index = self.top_index.saturating_sub(self.top_index + viewport_height*1/4 - editor_y);
         }
         if editor_x >= viewport_width - self.left_offset + self.side_scroll {
             // We need to scroll sideways

@@ -4,16 +4,24 @@ use crate::editor::Mode;
 
 pub const BLACK: Color = Color::Rgb{r:18,b:18,g:18};
 
-pub fn default_text_style() -> ContentStyle {
+pub fn default_text_style(is_current:bool) -> ContentStyle {
     let attr = Attributes::default();
     // attr.set(Attribute::Reset);
+    let bg = match is_current {
+        true => Some(Color::Rgb{
+            r: 60,
+            g: 60,
+            b: 60,
+        }),
+        false => Some(BLACK)
+    };
     ContentStyle {
         foreground_color: Some(Color::Rgb {
             r: 215,
             g: 215,
             b: 215,
         }),
-        background_color: Some(BLACK),
+        background_color: bg,
         underline_color: None,
         attributes: attr,
     }
@@ -38,15 +46,24 @@ pub fn highlighted_text() -> ContentStyle {
     }
 }
 
-pub fn default_line_number_style() -> ContentStyle {
+pub fn default_line_number_style(is_current: bool) -> ContentStyle {
     let attr = Attributes::default();
     // attr.set(Attribute::Reset);
-    ContentStyle {
-        foreground_color: Some(Color::Rgb {
+    let fg: Option<Color> = match is_current {
+        true => Some(Color::Rgb{
+            r: 100,
+            g: 149,
+            b: 171,
+        }),
+        false => Some(Color::Rgb {
             r: 50,
             g: 50,
             b: 50,
         }),
+
+    };
+    ContentStyle {
+        foreground_color: fg,        
         background_color: Some(BLACK),
         underline_color: None,
         attributes: attr,
