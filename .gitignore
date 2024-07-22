@@ -1,2 +1,4 @@
 /target
-bible.txt
+*.log
+*.txt
+Cargo.lock
