@@ -199,8 +199,6 @@ impl Editor {
     }
 
     pub fn pop_backspace(&mut self) {
-        //TODO fix the weird skipping issue, or just make the cursor be more leniant to being
-        //outside the buffer
         let prev_pos = self.cursor_pos;
         self.move_cursor_left(1);
         let new_pos = self.cursor_pos;
@@ -210,13 +208,13 @@ impl Editor {
             let second_line = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
             let second_line_cursor_pos = self.buffer.lines[second_line].chars().count();
             self.join_lines(second_line, first_line);
+            if self.cursor_pos.1 != 0 {
+                self.move_cursor_to(second_line_cursor_pos, self.cursor_pos.1);
+            }
             self.move_cursor_to(
                 self.cursor_pos.0,
                 self.cursor_pos.1.checked_sub(1).unwrap_or(0),
             );
-            if self.cursor_pos.1 != 0 {
-                self.move_cursor_to(second_line_cursor_pos, self.cursor_pos.1);
-            }
         } else {
             self.pop_char();
         }
