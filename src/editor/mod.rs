@@ -3,7 +3,7 @@ pub mod buffer;
 use std::error::Error;
 
 use crate::editor::buffer::TextBuffer;
-use copypasta::{ClipboardContext, ClipboardProvider};
+use copypasta::{wayland_clipboard::Clipboard, ClipboardContext, ClipboardProvider};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync + 'static>>;
 const DEFAULT_FILE_PATH: &str = "default.txt";
@@ -129,7 +129,15 @@ pub struct Editor {
 
 impl Editor {
     pub fn new() -> Editor {
-        let clipboard = DefaultClipboard::new();
+        let default_clipboard = DefaultClipboard::new();
+        let clipboard: Box<dyn ClipboardProvider> = match ClipboardContext::new(){
+            Ok(c) => {
+                Box::new(c)
+            }
+            Err(_) => {
+                Box::new(default_clipboard)
+            }
+        };
         Editor {
             buffer: TextBuffer::new(DEFAULT_FILE_PATH),
             cursor_pos: (0, 0),
@@ -137,7 +145,7 @@ impl Editor {
             message: String::new(),
             curr_selection: None,
             latest_x: None,
-            clipboard: Box::new(clipboard),
+            clipboard
         }
     }
 
