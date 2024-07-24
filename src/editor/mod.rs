@@ -2,8 +2,8 @@ pub mod buffer;
 
 use std::error::Error;
 
-use copypasta::{ClipboardContext, ClipboardProvider};
 use crate::editor::buffer::TextBuffer;
+use copypasta::{ClipboardContext, ClipboardProvider};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync + 'static>>;
 const DEFAULT_FILE_PATH: &str = "default.txt";
@@ -13,26 +13,25 @@ pub fn is_seperator(c: char) -> bool {
     !c.is_alphanumeric() || c.is_whitespace()
 }
 
-struct DefaultClipboard{
-    data : Vec<String>,
+struct DefaultClipboard {
+    data: Vec<String>,
 }
 
-impl DefaultClipboard{
+impl DefaultClipboard {
     pub fn new() -> Self {
-        DefaultClipboard{
-            data: Vec::new()
-        }
+        DefaultClipboard { data: Vec::new() }
     }
 }
 
-impl ClipboardProvider for DefaultClipboard{
+impl ClipboardProvider for DefaultClipboard {
     fn get_contents(&mut self) -> Result<String> {
         Ok(self.data.join("\n"))
     }
 
     fn set_contents(&mut self, contents: String) -> Result<()> {
+        self.data.clear();
         let split = contents.split('\n');
-        for s in split.into_iter(){
+        for s in split.into_iter() {
             self.data.push(s.to_string());
         }
         Ok(())
@@ -138,7 +137,7 @@ impl Editor {
             message: String::new(),
             curr_selection: None,
             latest_x: None,
-            clipboard : Box::new(clipboard),
+            clipboard: Box::new(clipboard),
         }
     }
 
@@ -203,12 +202,6 @@ impl Editor {
             let second_line = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
             let second_line_cursor_pos = self.buffer.lines[second_line].chars().count();
             self.join_lines(second_line, first_line);
-            // self.cursor_pos.1 = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
-            // self.cursor_pos.0 = if self.cursor_pos.1 == 0 {
-            //     0
-            // } else {
-            //     second_line_cursor_pos
-            // };
             self.move_cursor_to(
                 self.cursor_pos.0,
                 self.cursor_pos.1.checked_sub(1).unwrap_or(0),
@@ -266,7 +259,6 @@ impl Editor {
     pub fn move_cursor_left(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
         for _ in 0..amount {
-            // self.cursor_pos.0 = self.cursor_pos.0.checked_sub(1).unwrap_or(0);
             self.move_cursor_to(
                 self.cursor_pos.0.checked_sub(1).unwrap_or(0),
                 self.cursor_pos.1,
@@ -291,7 +283,6 @@ impl Editor {
             .count()
             .saturating_sub(value_to_sub);
         for _ in 0..amount {
-            // self.cursor_pos.0 = std::cmp::min(self.cursor_pos.0 + 1, n);
             self.move_cursor_to(std::cmp::min(self.cursor_pos.0 + 1, n), self.cursor_pos.1);
         }
         self.latest_x = Some(self.cursor_pos.0);
@@ -357,7 +348,6 @@ impl Editor {
     pub fn move_cursor_down(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
         let previous_y = self.cursor_pos.1;
-        // self.cursor_pos.1 = std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1);
         self.move_cursor_to(
             self.cursor_pos.0,
             std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1),
@@ -378,7 +368,6 @@ impl Editor {
     pub fn move_cursor_up(&mut self, amount: usize) -> MoveInfo {
         let start = self.cursor_pos;
         let previous_y = self.cursor_pos.1;
-        // self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(amount);
         self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1.saturating_sub(amount));
         if previous_y != 0 {
             if let Some(previous_x) = self.latest_x {
@@ -422,8 +411,6 @@ impl Editor {
             std::cmp::min(self.cursor_pos.0 + skip_amount, curr_line.chars().count()),
             self.cursor_pos.1,
         );
-        // self.cursor_pos.0 =
-        //     std::cmp::min(self.cursor_pos.0 + skip_amount, curr_line.chars().count());
         MoveInfo {
             start_pos: start,
             end_pos: self.cursor_pos,
@@ -450,8 +437,6 @@ impl Editor {
                     .map_or(false, |c| !is_seperator(c))
             {
                 n -= 1;
-                // self.cursor_pos.1 = loop_y;
-                // self.cursor_pos.0 = loop_x;
                 self.move_cursor_to(loop_x, loop_y);
                 self.latest_x = Some(loop_x);
                 result = MoveInfo {
@@ -477,8 +462,6 @@ impl Editor {
                     + 1;
                 let to_skip = found.0 + consumed;
                 n -= 1;
-                // self.cursor_pos.1 = loop_y;
-                // self.cursor_pos.0 = loop_x + to_skip;
                 self.move_cursor_to(loop_x + to_skip, loop_y);
                 self.latest_x = Some(loop_x + to_skip);
                 result = MoveInfo {
@@ -493,8 +476,6 @@ impl Editor {
             } else {
                 if loop_y == self.buffer.lines.len() - 1 {
                     // meaning we are in the last line
-                    // self.cursor_pos.0 = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)].chars().count().saturating_sub(1);
-                    // self.cursor_pos.1 = loop_y;
                     let new_x = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)]
                         .chars()
                         .count()
@@ -539,8 +520,6 @@ impl Editor {
                     .count();
                 let to_skip = found.0 + consumed;
                 n -= 1;
-                // self.cursor_pos.1 = loop_y;
-                // self.cursor_pos.0 = loop_x + to_skip;
                 self.move_cursor_to(loop_x + to_skip, loop_y);
                 self.latest_x = Some(loop_x + to_skip);
                 result = MoveInfo {
@@ -589,8 +568,6 @@ impl Editor {
                     .count();
                 let to_skip = found.0 + consumed;
                 n -= 1;
-                // self.cursor_pos.1 = loop_y;
-                // self.cursor_pos.0 = loop_x.saturating_sub(to_skip);
                 self.move_cursor_to(loop_x.saturating_sub(to_skip), loop_y);
                 result = MoveInfo {
                     start_pos: start,
@@ -606,8 +583,6 @@ impl Editor {
                 //start at the begginng then we want to go there before skipping
                 if loop_x > 0 {
                     n -= 1;
-                    // self.cursor_pos.1 = loop_y;
-                    // self.cursor_pos.0 = 0;
                     self.move_cursor_to(0, loop_y);
                     result = MoveInfo {
                         start_pos: start,
@@ -797,43 +772,143 @@ impl Editor {
         }
     }
 
-    pub fn move_to_end(&mut self) -> MoveInfo{
+    pub fn move_to_end(&mut self) -> MoveInfo {
         let start_pos = self.cursor_pos;
         let new_x = self.buffer.lines[self.cursor_pos.1].chars().count() - 1;
         self.move_cursor_to(new_x, self.cursor_pos.1);
         self.latest_x = Some(new_x);
-        MoveInfo{
+        MoveInfo {
             start_pos,
             end_pos: self.cursor_pos,
         }
     }
 
-    pub fn copy(&mut self, selection: MoveInfo) {
-        // This doesn't handle movements that are multi line spanning
-        let content = self.buffer.lines[selection.start_pos.1].chars().skip(selection.start_pos.0).take(selection.end_pos.0).collect();
-        self.clipboard.set_contents(content).unwrap();
+    pub fn copy(&mut self, selection: MoveInfo)  -> MoveInfo{
+        let mut result = Vec::new();
+        let (start_x, start_y) = selection.start_pos;
+        let (end_x, end_y) = selection.end_pos;
+        let mut m = MoveInfo{
+            start_pos : selection.start_pos.clone(),
+            end_pos: selection.end_pos.clone(),
+        };
 
+        let take_amount = if start_y == end_y {
+            end_x - start_x
+        } else {
+            self.buffer.lines[start_y].chars().count() - start_x
+        };
+        let content = self.buffer.lines[start_y]
+            .chars()
+            .skip(start_x)
+            .take(take_amount)
+            .collect::<String>();
+        result.push(content.as_str());
+
+        let num_lines = end_y.saturating_sub(start_y);
+
+        for i in 1..num_lines {
+            log::info!("What");
+            result.push(self.buffer.lines[start_y + i].as_str());
+        }
+
+        //if our start_y and end_y are differents we need to take the remainder of the string as
+        //well
+        let remainder;
+        if start_y != end_y {
+            let len = self.buffer.lines[end_y].chars().count();
+            let take_amount = if end_x == len - 1 { len } else { end_x };
+            m.end_pos.1 = take_amount.clone();
+            remainder = self.buffer.lines[end_y]
+                .chars()
+                .take(take_amount)
+                .collect::<String>();
+            result.push(remainder.as_str());
+        }
+        self.clipboard.set_contents(result.join("\n")).unwrap();
+        log::info!("{}", self.clipboard.get_contents().unwrap());
+        m
     }
-    pub fn copy_lines(&mut self, movement: MoveInfo) {
+    pub fn copy_lines(&mut self, movement: MoveInfo) -> MoveInfo{
         let m = movement.get_ordered();
         let (_, start_y) = m.start_pos;
 
         let num_lines = m.end_pos.1.saturating_sub(start_y) + 1;
         let mut contents = Vec::new();
         for i in 0..num_lines {
-            contents.push(self.buffer.lines[start_y + i].to_string());
+            contents.push(self.buffer.lines[start_y + i].as_str());
         }
-        self.clipboard.set_contents(contents.join("\n")).unwrap();
 
+        let mut clipboard_contents = contents.join("\n");
+        clipboard_contents.push('\n');
+        self.clipboard.set_contents(clipboard_contents).unwrap();
+        MoveInfo {
+            start_pos : (0,m.start_pos.1),
+            end_pos: (self.buffer.lines[start_y + num_lines.saturating_sub(1)].chars().count(), start_y + num_lines.saturating_sub(1))
+        }
     }
 
-    pub fn paste(&mut self){
+    fn paste_lines(&mut self) {
+        let split: Vec<String> = self
+            .clipboard
+            .get_contents()
+            .unwrap()
+            .split('\n')
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut new_lines = Vec::new();
+        for (i, str) in self.buffer.lines.iter().enumerate() {
+            if i == self.cursor_pos.1 {
+                new_lines.push(str.to_string());
+                for s in split.as_slice().iter().take(split.len() - 1) {
+                    new_lines.push(s.to_string());
+                }
+            } else {
+                new_lines.push(str.to_string());
+            }
+        }
+        self.buffer.lines = new_lines;
+        self.cursor_pos.1 += 1;
+    }
+
+    pub fn paste(&mut self) {
         // paste is a bit more complicated than this
         let binding = self.clipboard.get_contents().unwrap();
-        let contents =  binding.split('\n').rev();
-        for s in contents{
-            self.buffer.lines.insert(self.cursor_pos.1,s.to_string());
+        log::info!("{}", binding);
+        // figure out where or not the content we have are full lines
+        if let Some(c) = binding.chars().rev().next() {
+            if c == '\n' {
+                return self.paste_lines();
+            }
+        }
+
+        let binding_len = binding.chars().count();
+        let mut copy = self.buffer.lines[self.cursor_pos.1].clone();
+        copy.insert_str(
+            std::cmp::min(self.cursor_pos.0 + 1, copy.chars().count()),
+            &binding,
+        );
+
+        let split = copy.split('\n');
+
+        let len = self.buffer.lines.len();
+        let mut save = 0;
+        for (i, str) in split.enumerate() {
+            if i == 0 {
+                self.buffer.lines[self.cursor_pos.1 + i] = str.to_string();
+            } else if self.cursor_pos.1 + i < len {
+                self.buffer
+                    .lines
+                    .insert(self.cursor_pos.1 + i, str.to_string());
+            } else {
+                self.buffer.lines.push(str.to_string());
+            }
+            save = i;
+        }
+
+        // Have cursor follow
+        if save == 0 {
+            self.move_cursor_to(self.cursor_pos.0 + binding_len, self.cursor_pos.1);
         }
     }
-
 }

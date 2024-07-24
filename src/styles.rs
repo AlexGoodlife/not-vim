@@ -46,6 +46,25 @@ pub fn highlighted_text() -> ContentStyle {
     }
 }
 
+pub fn yank_highlighted_text() -> ContentStyle {
+    let attr = Attributes::default();
+    // attr.set(Attribute::Reset);
+    ContentStyle {
+        foreground_color: Some(Color::Rgb {
+            r: 215,
+            g: 215,
+            b: 215,
+        }),
+        background_color: Some(Color::Rgb{
+            r: 255,
+            g: 120,
+            b: 255,
+        }),
+        underline_color: None,
+        attributes: attr,
+    }
+}
+
 pub fn default_line_number_style(is_current: bool) -> ContentStyle {
     let attr = Attributes::default();
     // attr.set(Attribute::Reset);

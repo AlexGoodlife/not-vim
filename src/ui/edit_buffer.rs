@@ -5,6 +5,7 @@ use crossterm::{
     queue,
 };
 
+const YANK_HIGHLIGHT_FAMES: usize = 15;
 const INSERT_TABS: bool = true;
 use crate::{
     editor::{
@@ -96,6 +97,8 @@ pub struct EditorBuffer {
     waiting_input: Option<Action>,
     waiting_action: Option<(Option<usize>, Action)>, // we need to store the repeater state when action as input
     repeater: Option<usize>,
+    highlighted_selection: Option<MoveInfo>,
+    elapsed_frames: usize,
 }
 
 impl EditorBuffer {
@@ -112,6 +115,8 @@ impl EditorBuffer {
             waiting_input: None,
             waiting_action: None,
             repeater: None,
+            highlighted_selection: None,
+            elapsed_frames: 0,
         }
     }
 
@@ -133,8 +138,16 @@ impl EditorBuffer {
         y > start_y && y < end_y
     }
     pub fn draw_lines(&mut self, render_buffer: &mut RenderBuffer, editor: &mut Editor) {
-            //Fill current_line with different highlight
-            render_buffer.put_str(&" ".repeat(self.viewport.width.saturating_sub(self.left_offset)), (self.left_offset,editor.cursor_pos.1.saturating_sub(self.top_index)), default_text_style(true), &self.viewport);
+        //Fill current_line with different highlight
+        render_buffer.put_str(
+            &" ".repeat(self.viewport.width.saturating_sub(self.left_offset)),
+            (
+                self.left_offset,
+                editor.cursor_pos.1.saturating_sub(self.top_index),
+            ),
+            default_text_style(true),
+            &self.viewport,
+        );
         for (i, line) in editor.buffer.lines.iter().skip(self.top_index).enumerate() {
             if i >= self.viewport.height as usize {
                 break;
@@ -147,12 +160,13 @@ impl EditorBuffer {
             let mut cells: Vec<Cell> = Vec::new();
             let l = if line.len() == 0 { " " } else { line }; //  to render empty lines in visual mode
 
-
-
             for (x, c) in l.chars().enumerate() {
-                let style = match &editor.curr_selection {
+                //Draw yanked highlight
+                let mut style = match &self.highlighted_selection {
                     Some(selection) => {
-                        if Self::is_in_selection(x, i + self.top_index, &selection.1) {
+                        if Self::is_in_selection(x, i + self.top_index, &selection)
+                            && self.elapsed_frames <= YANK_HIGHLIGHT_FAMES
+                        {
                             highlighted_text()
                         } else {
                             default_text_style(i + self.top_index == editor.cursor_pos.1)
@@ -160,6 +174,18 @@ impl EditorBuffer {
                     }
                     None => default_text_style(i + self.top_index == editor.cursor_pos.1),
                 };
+
+                style = match &editor.curr_selection {
+                    Some(selection) => {
+                        if Self::is_in_selection(x, i + self.top_index, &selection.1) {
+                            highlighted_text()
+                        } else {
+                            default_text_style(i + self.top_index == editor.cursor_pos.1)
+                        }
+                    }
+                    None => style
+                };
+
                 if c == '\t' {
                     for _ in 0..Editor::get_spaces_till_next_tab(size, TABSTOP) {
                         cells.push(Cell::with_style(' ', style));
@@ -191,7 +217,12 @@ impl EditorBuffer {
             let padding = self.left_offset - 3;
             let padded = format!("{:>padding$} │ ", num_str);
 
-            render_buffer.put_str(&padded, (0, i), default_line_number_style(i + self.top_index == editor.cursor_pos.1), &self.viewport);
+            render_buffer.put_str(
+                &padded,
+                (0, i),
+                default_line_number_style(i + self.top_index == editor.cursor_pos.1),
+                &self.viewport,
+            );
         }
     }
 
@@ -241,18 +272,18 @@ impl EditorBuffer {
             Action::Paste => {
                 editor.paste();
                 None
-            },
+            }
             Action::Copy(ref a, ref movement) => {
                 let m = movement.get_ordered();
                 if matches!(**a, Action::MoveUp | Action::MoveDown | Action::ActOnSelf) {
-                    editor.copy_lines(m.clone());
+                    self.highlighted_selection = Some(editor.copy_lines(m.clone()));
                 } else {
-                    editor.copy(movement.clone());
+                    self.highlighted_selection = Some(editor.copy(movement.clone()));
                 }
                 editor.move_cursor_to(m.start_pos.0, m.start_pos.1);
+                self.elapsed_frames = 0;
                 None
-
-            },
+            }
             Action::Delete(ref a, ref movement) => {
                 let m = movement.get_ordered();
                 if matches!(**a, Action::MoveUp | Action::MoveDown | Action::ActOnSelf) {
@@ -322,15 +353,13 @@ impl EditorBuffer {
             | Action::CenterUnresolved
             | Action::CopyUnresolved
             | Action::None => None,
-            Action::MoveEndOfLine => {
-                Some(editor.move_to_end())
-            },
+            Action::MoveEndOfLine => Some(editor.move_to_end()),
             Action::AppendEndOfLine => {
                 editor.move_to_end();
                 editor.switch_mode(Mode::Insert);
                 editor.move_cursor_right(1);
                 None
-            },
+            }
         }
     }
 
@@ -583,7 +612,7 @@ impl EditorBuffer {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.handle_waiting_command(stdout,editor,Action::CopyUnresolved);
+                self.handle_waiting_command(stdout, editor, Action::CopyUnresolved);
             }
             KeyEvent {
                 code: KeyCode::Char('p'),
@@ -591,7 +620,7 @@ impl EditorBuffer {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.handle_motions(stdout,editor,Motion::Single(Action::Paste));
+                self.handle_motions(stdout, editor, Motion::Single(Action::Paste));
             }
             KeyEvent {
                 code: KeyCode::Char('z'),
@@ -676,7 +705,7 @@ impl EditorBuffer {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.handle_motions(stdout,editor,Motion::Single(Action::AppendEndOfLine));
+                self.handle_motions(stdout, editor, Motion::Single(Action::AppendEndOfLine));
                 queue!(stdout, crossterm::cursor::SetCursorStyle::BlinkingBar)?
             }
             KeyEvent {
@@ -755,7 +784,7 @@ impl EditorBuffer {
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
             } => {
-                self.handle_motions(stdout,editor,Motion::Single(Action::MoveEndOfLine));
+                self.handle_motions(stdout, editor, Motion::Single(Action::MoveEndOfLine));
             }
             KeyEvent {
                 code: KeyCode::Char(c),
@@ -810,13 +839,15 @@ impl Component for EditorBuffer {
         // let (client_x, client_y) = self.cursor_pos;
         let viewport_height = (self.viewport.height).saturating_sub(1);
         let viewport_width = (self.viewport.width).saturating_sub(1);
-        if editor_y >= viewport_height*3/4 + self.top_index {
+        if editor_y >= viewport_height * 3 / 4 + self.top_index {
             // We need to scroll down
-            self.top_index += editor_y - (viewport_height*3/4 + self.top_index);
+            self.top_index += editor_y - (viewport_height * 3 / 4 + self.top_index);
         }
-        if editor_y < self.top_index + viewport_height*1/4 {
+        if editor_y < self.top_index + viewport_height * 1 / 4 {
             // We need to scroll up
-            self.top_index = self.top_index.saturating_sub(self.top_index + viewport_height*1/4 - editor_y);
+            self.top_index = self
+                .top_index
+                .saturating_sub(self.top_index + viewport_height * 1 / 4 - editor_y);
         }
         if editor_x >= viewport_width - self.left_offset + self.side_scroll {
             // We need to scroll sideways
@@ -861,6 +892,7 @@ impl Component for EditorBuffer {
     fn draw(&mut self, buffer: &mut RenderBuffer, editor: &mut Editor) {
         self.draw_line_numbers(buffer, editor);
         self.draw_lines(buffer, editor);
+        self.elapsed_frames = self.elapsed_frames.saturating_add(1);
     }
 
     fn get_viewport(&self) -> &Viewport {
