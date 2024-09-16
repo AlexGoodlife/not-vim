@@ -15,7 +15,7 @@ use crate::{
     styles::{default_line_number_style, default_text_style, highlighted_text},
 };
 
-use super::Component;
+use super::{ClientAction, Component};
 #[derive(PartialEq, Clone, Debug)]
 enum Action {
     None,
@@ -148,7 +148,7 @@ impl EditorBuffer {
             default_text_style(true),
             &self.viewport,
         );
-        for (i, line) in editor.buffer.lines.iter().skip(self.top_index).enumerate() {
+        for (i, line) in editor.curr_buffer().lines.iter().skip(self.top_index).enumerate() {
             if i >= self.viewport.height as usize {
                 break;
             }
@@ -202,13 +202,13 @@ impl EditorBuffer {
                 .into_iter()
                 .skip(self.side_scroll)
                 .collect::<Vec<Cell>>();
-            render_buffer.put_cells(&skipped, (self.left_offset, i), &self.viewport);
+            render_buffer.put_cells(&skipped, (self.left_offset as i64, i as i64), &self.viewport);
         }
     }
 
     fn draw_line_numbers(&mut self, render_buffer: &mut RenderBuffer, editor: &mut Editor) {
-        self.left_offset = editor.buffer.lines.len().to_string().chars().count() + 3; //  3 extra for '|' and a  2 spaces
-        for (i, _line) in editor.buffer.lines.iter().skip(self.top_index).enumerate() {
+        self.left_offset = editor.curr_buffer().lines.len().to_string().chars().count() + 3; //  3 extra for '|' and a  2 spaces
+        for (i, _line) in editor.curr_buffer().lines.iter().skip(self.top_index).enumerate() {
             if i >= self.viewport.height as usize {
                 break;
             }
@@ -322,10 +322,10 @@ impl EditorBuffer {
                 editor.switch_mode(mode.clone());
                 None
             }
-            Action::WriteCurrentBuffer => {
-                editor
-                    .write_current_buffer()
-                    .expect("Writing to buffer failed");
+            Action::WriteCurrentBuffer => { // writing current buffer is going to be a client
+                // action not a editor action
+                let _ = editor
+                    .write_current_buffer();
                 None
             }
             Action::DeleteVisualMode => {
@@ -432,7 +432,7 @@ impl EditorBuffer {
         stdout: &mut impl Write,
         editor: &mut Editor,
         ev: event::KeyEvent,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ClientAction> {
         match ev {
             KeyEvent {
                 code: KeyCode::Esc,
@@ -463,7 +463,7 @@ impl EditorBuffer {
             }
             _ => {}
         }
-        Ok(())
+        Ok(ClientAction::None)
     }
 
     fn handle_insert_keys(
@@ -471,7 +471,7 @@ impl EditorBuffer {
         stdout: &mut impl Write,
         editor: &mut Editor,
         ev: event::KeyEvent,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ClientAction> {
         match ev {
             KeyEvent {
                 code: KeyCode::Char(character),
@@ -566,14 +566,14 @@ impl EditorBuffer {
             }
             _ => (),
         }
-        Ok(())
+        Ok(ClientAction::None)
     }
     fn handle_normal_keys(
         &mut self,
         stdout: &mut impl Write,
         editor: &mut Editor,
         ev: event::KeyEvent,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ClientAction> {
         if self.waiting_input.is_some() {
             return self.handle_waiting_inputs(stdout, editor, ev);
         }
@@ -594,6 +594,14 @@ impl EditorBuffer {
                     Motion::Single(Action::SwitchMode(Mode::Normal)),
                 );
             }
+            KeyEvent {
+                code: KeyCode::Char(':'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                return Ok(ClientAction::OpenCommandPrompt)
+            },
             KeyEvent {
                 code: KeyCode::Char('v'),
                 modifiers: KeyModifiers::NONE,
@@ -794,7 +802,7 @@ impl EditorBuffer {
             } => {
                 //We only modify a single quantifier
                 if !matches!(c, '0'..='9') {
-                    return Ok(());
+                    return Ok(ClientAction::None);
                 }
 
                 if let Some(ref mut repeater) = self.repeater {
@@ -805,14 +813,14 @@ impl EditorBuffer {
                 } else {
                     self.repeater = Some(c.to_digit(10).unwrap_or(1) as usize);
                 }
-            }
+            },
             _ => {
                 // We input something wrong, we should clear the repeater
                 self.repeater = None;
                 ()
             }
         }
-        Ok(())
+        Ok(ClientAction::None)
     }
 
     fn handle_waiting_command(&mut self, stdout: &mut impl Write, editor: &mut Editor, a: Action) {
@@ -834,7 +842,7 @@ impl EditorBuffer {
 }
 
 impl Component for EditorBuffer {
-    fn update_cursor(&mut self, editor: &mut Editor) -> (u16, u16) {
+    fn update_cursor(&mut self, editor: &mut Editor) -> (i64, i64) {
         let (editor_x, editor_y) = editor.cursor_pos;
         // let (client_x, client_y) = self.cursor_pos;
         let viewport_height = (self.viewport.height).saturating_sub(1);
@@ -862,7 +870,7 @@ impl Component for EditorBuffer {
         //Essentially we need to check which char our cursor is on, and find out how much we should
         //shift our cursor based on how many \t were before it, since representations of \t on a
         //buffer level are just singular characters
-        let curr_line = &editor.buffer.lines[editor_y];
+        let curr_line = &editor.curr_buffer().lines[editor_y];
 
         let take_amount = if editor.mode == Mode::Normal {
             editor_x + 1
@@ -886,7 +894,7 @@ impl Component for EditorBuffer {
         let x = (self.left_offset as u16 + editor_x as u16 + shiftwidth as u16)
             .saturating_sub(self.side_scroll as u16);
         let y = (editor_y - self.top_index) as u16;
-        (x, y)
+        (x.into(), y.into())
     }
 
     fn draw(&mut self, buffer: &mut RenderBuffer, editor: &mut Editor) {
@@ -912,15 +920,19 @@ impl Component for EditorBuffer {
         stdout: &mut Box<dyn Write>,
         editor: &mut Editor,
         event: Event,
-    ) -> anyhow::Result<()> {
-        match event {
+    ) -> std::result::Result<(bool, ClientAction), anyhow::Error> {
+        let action = match event {
             Event::Key(ev) => match editor.mode {
                 Mode::Normal => self.handle_normal_keys(&mut (*stdout), editor, ev)?,
                 Mode::Insert => self.handle_insert_keys(&mut (*stdout), editor, ev)?,
                 Mode::Visual => self.handle_normal_keys(&mut (*stdout), editor, ev)?,
             },
-            _ => {}
-        }
-        Ok(())
+            _ => {ClientAction::None}
+        };
+        Ok((false, action))
+    }
+
+    fn is_interactive(&self) -> bool {
+        true
     }
 }

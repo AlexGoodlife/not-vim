@@ -1,6 +1,8 @@
 use std::io::Write;
 
 pub mod edit_buffer;
+pub mod command_prompt;
+pub mod text_prompt;
 use crossterm::event::Event;
 
 use crate::{
@@ -19,10 +21,23 @@ pub fn resize_viewport(viewport: &Viewport, w: usize, h: usize) -> Viewport {
     }
 }
 
+// Actions to be bubbled up and performed on the client
+#[derive(PartialEq, Clone, Debug)]
+pub enum ClientAction {
+    None,
+    Quit,
+    OpenBuffer(String),
+    SaveCurrentBuffer,
+    CloseBuffer,
+    NextBuffer,
+    PreviousBuffer,
+    OpenCommandPrompt,
+}
+
 //Perfect place for a Macro to generate new methods for me, split the resize stuff into a seperate
 //trait and have all my components derive it, boom done, for now we do it by hand
 pub trait Component {
-    fn update_cursor(&mut self, editor: &mut Editor) -> (u16, u16);
+    fn update_cursor(&mut self, editor: &mut Editor) -> (i64, i64);
     fn draw(&mut self, buffer: &mut RenderBuffer, editor: &mut Editor);
     fn get_viewport(&self) -> &Viewport;
     fn resize(&mut self, w: usize, h: usize);
@@ -32,8 +47,10 @@ pub trait Component {
         stdout: &mut Box<dyn Write>,
         editor: &mut Editor,
         event: Event,
-    ) -> anyhow::Result<()>; // return if we should terminate the program or not
+    ) -> anyhow::Result<(bool, ClientAction)>; // return if component no longer needs to exist
+    fn is_interactive(&self) -> bool;
 }
+
 
 pub struct Gutter {
     gutter_viewport: Viewport,
@@ -53,7 +70,7 @@ impl Gutter {
 }
 
 impl Component for Gutter {
-    fn update_cursor(&mut self, _editor: &mut Editor) -> (u16, u16) {
+    fn update_cursor(&mut self, _editor: &mut Editor) -> (i64, i64) {
         (0, 0) // Gutter doesn't get any cursors on it
     }
 
@@ -123,8 +140,12 @@ impl Component for Gutter {
         _stdout: &mut Box<(dyn Write)>,
         _editor: &mut Editor,
         _event: Event,
-    ) -> anyhow::Result<()> {
-        Ok(())
+    ) -> std::result::Result<(bool, ClientAction), anyhow::Error> {
+        Ok((false,ClientAction::None))
+    }
+
+    fn is_interactive(&self) -> bool {
+        false
     }
 }
 
@@ -158,7 +179,7 @@ impl Component for MessagesComponent {
         self.resize_callback = c;
     }
 
-    fn update_cursor(&mut self, _editor: &mut Editor) -> (u16, u16) {
+    fn update_cursor(&mut self, _editor: &mut Editor) -> (i64, i64) {
         (0, 0)
     }
 
@@ -176,7 +197,10 @@ impl Component for MessagesComponent {
         _stdout: &mut Box<(dyn Write)>,
         _editor: &mut Editor,
         _event: Event,
-    ) -> anyhow::Result<()> {
-        Ok(())
+    ) -> std::result::Result<(bool, ClientAction), anyhow::Error> {
+        Ok((false, ClientAction::None))
+    }
+    fn is_interactive(&self) -> bool {
+        false
     }
 }

@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
+use crate::util::clamp;
 
 use crossterm::cursor;
 use crossterm::queue;
@@ -75,14 +76,19 @@ impl RenderBuffer {
         }
     }
 
-    pub fn put_cells(&mut self, cells: &Vec<Cell>, pos: (usize, usize), viewport: &Viewport) {
+
+    pub fn put_cells(&mut self, cells: &Vec<Cell>, pos: (i64, i64), viewport: &Viewport) {
+        let dx = pos.0 as i64;
+        let dy = pos.1 as i64;
         for (i, c) in cells.iter().enumerate() {
-            let x = std::cmp::min(self.width - 1, pos.0 + viewport.pos.0);
-            let y = std::cmp::min(self.height - 1, pos.1 + viewport.pos.1);
-            if x + i >= self.width || x + i >= x + viewport.width {
+            let x = clamp(viewport.pos.0 as i64 + dx, 0, self.width.saturating_sub(1) as i64);
+            let y = clamp(viewport.pos.1 as i64 + dy, 0, self.height.saturating_sub(1) as i64);
+            // let x = std::cmp::min(self.width.saturating_sub(1), pos.0 + viewport.pos.0);
+            // let y = std::cmp::min(self.height.saturating_sub(1), pos.1 + viewport.pos.1);
+            if x + i as i64 >= self.width as i64 || x + i as i64 >= x + viewport.width as i64 {
                 break;
             }; // Don't render anything that isn't going to be seen
-            let index = y * self.width + x + i;
+            let index = y as usize * self.width + x as usize + i;
             self.data[index] = *c;
         }
     }
@@ -223,7 +229,7 @@ impl RenderBuffer {
 
 pub struct TextBuffer {
     pub lines: Vec<String>,
-    pub path: String,
+    pub path: Option<String>,
     pub bytes_len: usize,
     pub has_changes: bool,
 }
@@ -243,7 +249,7 @@ impl TextBuffer {
             - 1;
         Ok(TextBuffer {
             lines,
-            path: path.to_owned(),
+            path: Some(path.to_owned()),
             bytes_len,
             has_changes: false,
         })
@@ -252,17 +258,27 @@ impl TextBuffer {
     pub fn new(path: &str) -> TextBuffer {
         TextBuffer {
             lines: vec![String::new(); 1],
-            path: path.to_owned(),
+            path: Some(path.to_owned()),
             bytes_len: 0,
             has_changes: false,
         }
     }
 
-    pub fn write_to_file(&mut self) -> anyhow::Result<(usize, usize)> {
+    pub fn empty() -> TextBuffer {
+        TextBuffer {
+            lines: vec![String::new(); 1],
+            path: None,
+            bytes_len: 0,
+            has_changes: false,
+        }
+
+    }
+
+    pub fn write_to_file(&mut self, path : &str) -> anyhow::Result<(usize, usize)> {
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
-            .open(self.path.clone())?;
+            .open(path)?;
 
         let binding = self.lines.join("\n");
         let content = binding.as_bytes();

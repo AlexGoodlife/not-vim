@@ -1,12 +1,10 @@
-
-pub fn digits(mut num : usize) -> usize{
-    if num == 0{
-        return 1
-    } 
-    let mut result = 0;
-    while num != 0 {
-        num /= 10;
-        result += 1;
+pub fn clamp(a: i64, min: i64, max: i64) -> i64 {
+    if a < min {
+        min
+    } else if a > max {
+        max
+    } else {
+        a
     }
-    result
 }
+

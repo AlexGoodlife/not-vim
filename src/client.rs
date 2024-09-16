@@ -1,9 +1,12 @@
 use crate::editor::buffer::Viewport;
 use crate::editor::Editor;
 use crate::ui::edit_buffer::EditorBuffer;
+use crate::ui::command_prompt::CommandPrompt;
+use crate::ui::ClientAction;
 use crate::ui::Component;
 use crate::ui::Gutter;
 use crate::ui::MessagesComponent;
+use crate::util::clamp;
 use std::io::Stdout;
 use std::io::Write;
 use std::mem;
@@ -33,7 +36,7 @@ const DEBUG: bool = false;
 pub struct Client {
     stdout: Box<dyn Write>,
     quit: bool,
-    // window_dimensions: (u16, u16),
+    window_dimensions: (usize, usize),
     curr_buffer: RenderBuffer,
     next_buffer: RenderBuffer,
     cursor_pos: (u16, u16),
@@ -56,6 +59,7 @@ impl Client {
             editor: Editor::new(),
             ui_components: Vec::new(),
             active_compontent_index: 0,
+            window_dimensions: (w,h)
         };
         let messages_viewport = Viewport {
             pos: (0, h.saturating_sub(1)),
@@ -149,8 +153,11 @@ impl Client {
         let current_component = &self.ui_components[self.active_compontent_index];
         let (viewport_x, viewport_y) = current_component.get_viewport().pos;
 
-        self.cursor_pos.0 = viewport_x as u16 + new_x;
-        self.cursor_pos.1 = viewport_y as u16 + new_y;
+        // clamp this
+        let clamped_x = clamp(viewport_x as i64 + new_x as i64, 0, self.window_dimensions.0 as i64);
+        let clamped_y = clamp(viewport_y as i64 + new_y as i64, 0, self.window_dimensions.1 as i64);
+        self.cursor_pos.0 = clamped_x as u16;
+        self.cursor_pos.1 = clamped_y as u16;
     }
 
     fn update(&mut self) -> anyhow::Result<()> {
@@ -175,7 +182,7 @@ impl Client {
                 state: KeyEventState::NONE,
             } => {
                 self.quit = true;
-            }
+            },
             _ => {}
         }
         Ok(())
@@ -186,6 +193,7 @@ impl Client {
             let event = read()?;
             match event {
                 Event::Resize(w, h) => {
+                    self.window_dimensions = (w as usize, h as usize);
                     self.next_buffer = RenderBuffer::new(w.into(), h.into());
                     self.curr_buffer = RenderBuffer::new(w.into(), h.into());
                     self.cursor_pos = (0, 0);
@@ -201,13 +209,57 @@ impl Client {
                 Event::Key(ev) => self.handle_keys(ev)?,
                 _ => println!("Some other event"),
             }
-            self.ui_components[self.active_compontent_index].handle_events(
+            let curr_component = &mut self.ui_components[self.active_compontent_index];
+            let (quit, action) = curr_component.handle_events(
                 &mut self.stdout,
                 &mut self.editor,
                 event,
             )?;
+            self.match_client_actions(action)?;
+            if quit {
+                self.ui_components.remove(self.active_compontent_index);
+                let new_component = self.ui_components.iter().enumerate().find(|(_,c)| c.is_interactive());
+                if let Some(c) = new_component {
+                    self.active_compontent_index = c.0;
+                }
+                else {
+                    self.quit = true; // No interactive components found, we will quit the program
+                }
+            }
         }
         Ok(())
+    }
+
+    fn match_client_actions(&mut self, action : ClientAction) -> anyhow::Result<()>{
+        match action {
+            ClientAction::None => {},
+            ClientAction::OpenBuffer(path) => self.editor.open_file(&path)?,
+            ClientAction::SaveCurrentBuffer => self.editor.write_current_buffer()?,
+            ClientAction::CloseBuffer => self.editor.close_current_buffer(),
+            ClientAction::NextBuffer => todo!(),
+            ClientAction::PreviousBuffer => todo!(),
+            ClientAction::Quit => self.quit = true,
+            ClientAction::OpenCommandPrompt => {
+                self.ui_components.push(Box::new(CommandPrompt::new(
+                    Viewport{
+                        pos : (self.window_dimensions.0/2 - self.window_dimensions.0/4/2,
+                        self.window_dimensions.1/2 - self.window_dimensions.1/4/2),
+                       height: std::cmp::min(3,self.window_dimensions.1 / 4 ),
+                       width: self.window_dimensions.0 / 4 ,
+                    },
+                    Box::new(|w,h| {
+                        Viewport {
+                            pos: (w/2 - w/4/2, h/2 - h/4/2),
+                            height: std::cmp::min(3,h/ 4 ),
+                            width: w/4,
+                        }
+                    })
+                )));
+                self.active_compontent_index = self.ui_components.len() - 1;
+            }
+        }
+        Ok(())
+
     }
 }
 

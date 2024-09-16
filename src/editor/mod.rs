@@ -108,16 +108,22 @@ impl EditorStatus {
     pub fn from_editor(editor: &Editor) -> EditorStatus {
         EditorStatus {
             cursor_pos: editor.cursor_pos,
-            curr_buffer: editor.buffer.path.to_string(),
+            curr_buffer: {
+                match &editor.open_buffers[editor.current_index].path {
+                    Some(path) => path.to_string(),
+                    None => "Unnamed".to_string()
+                }
+            },
             mode: editor.mode.clone(),
-            bytes: editor.buffer.bytes_len,
-            has_changes: editor.buffer.has_changes,
+            bytes: editor.open_buffers[editor.current_index].bytes_len,
+            has_changes: editor.open_buffers[editor.current_index].has_changes,
         }
     }
 }
 
 pub struct Editor {
-    pub buffer: TextBuffer,
+    open_buffers: Vec<TextBuffer>,
+    current_index: usize,
     pub cursor_pos: (usize, usize), // x, y, collumn, rows
     pub mode: Mode,
     pub message: String,
@@ -138,33 +144,57 @@ impl Editor {
                 Box::new(default_clipboard)
             }
         };
+        let empty = TextBuffer::empty();
+        let mut vec = Vec::new();
+        vec.push(empty);
         Editor {
-            buffer: TextBuffer::new(DEFAULT_FILE_PATH),
             cursor_pos: (0, 0),
             mode: Mode::Normal,
             message: String::new(),
             curr_selection: None,
             latest_x: None,
-            clipboard
+            clipboard,
+            open_buffers: vec,
+            current_index: 0, // always gonna have an unnamed buffer
         }
     }
 
     pub fn open_file(&mut self, path: &str) -> anyhow::Result<()> {
-        self.buffer = TextBuffer::from_path(path)?;
+        let buff =TextBuffer::from_path(path)?; 
+        self.open_buffers.push(buff);
+        self.current_index = self.open_buffers.len() - 1;
         Ok(())
     }
 
+    pub fn curr_buffer(&self) -> &TextBuffer {
+        &self.open_buffers[self.current_index]
+    }
+
     pub fn write_current_buffer(&mut self) -> anyhow::Result<()> {
-        let (bytes, n) = self.buffer.write_to_file()?;
+        let curr_buff = &mut self.open_buffers[self.current_index];
+        if let Some(path) = curr_buff.path.clone() {
+            let (bytes, n) = curr_buff.write_to_file(path.as_str())?;
+            self.message = format!(
+                "Wrote {} lines and {} bytes into \"{}\"",
+                n, bytes, path
+            );
+            return Ok(());
+        }
+        Err(anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::NotFound, "File requires a path to write")))
+    }
+
+    pub fn write_current_buffer_to_path(&mut self, path: &str) -> anyhow::Result<()> {
+        let (bytes, n) = self.open_buffers[self.current_index].write_to_file(path)?;
         self.message = format!(
             "Wrote {} lines and {} bytes into \"{}\"",
-            n, bytes, self.buffer.path
+            n, bytes, path
         );
         Ok(())
     }
 
     pub fn put_char(&mut self, c: char) {
-        let curr_line = &mut self.buffer.lines[self.cursor_pos.1];
+        let curr_buffer = &mut self.open_buffers[self.current_index];
+        let curr_line = &mut curr_buffer.lines[self.cursor_pos.1];
         match curr_line.char_indices().nth(self.cursor_pos.0) {
             Some(result) => {
                 curr_line.insert(result.0, c);
@@ -174,28 +204,29 @@ impl Editor {
             }
         }
         self.cursor_pos.0 += 1;
-        self.buffer.has_changes = true;
+        curr_buffer.has_changes = true;
     }
 
     pub fn put_newline(&mut self) {
-        let curr_line = &mut self.buffer.lines[self.cursor_pos.1];
-        let rest_of_str: String = curr_line
-            .chars()
-            .skip(self.cursor_pos.0)
-            .skip_while(|c| *c == ' ')
-            .collect();
+        {
+            let curr_buffer = &mut self.open_buffers[self.current_index];
+            let curr_line = &mut curr_buffer.lines[self.cursor_pos.1];
+            let rest_of_str: String = curr_line
+                .chars()
+                .skip(self.cursor_pos.0)
+                .skip_while(|c| *c == ' ')
+                .collect();
 
-        *curr_line = curr_line
-            .chars()
-            .enumerate()
-            .take_while(|(i, _)| *i < self.cursor_pos.0)
-            .map(|(_, c)| c)
-            .collect();
-        self.buffer.lines.insert(self.cursor_pos.1 + 1, rest_of_str);
+            *curr_line = curr_line
+                .chars()
+                .enumerate()
+                .take_while(|(i, _)| *i < self.cursor_pos.0)
+                .map(|(_, c)| c)
+                .collect();
+            curr_buffer.lines.insert(self.cursor_pos.1 + 1, rest_of_str);
+            curr_buffer.has_changes = true;
+        }
         self.move_cursor_to(0, self.cursor_pos.1 + 1);
-        // self.cursor_pos.1 += 1;
-        // self.cursor_pos.0 = 0;
-        self.buffer.has_changes = true;
     }
 
     pub fn pop_backspace(&mut self) {
@@ -206,7 +237,7 @@ impl Editor {
             // We actually want to join the two lines together
             let first_line = self.cursor_pos.1;
             let second_line = self.cursor_pos.1.checked_sub(1).unwrap_or(0);
-            let second_line_cursor_pos = self.buffer.lines[second_line].chars().count();
+            let second_line_cursor_pos = self.open_buffers[self.current_index].lines[second_line].chars().count();
             self.join_lines(second_line, first_line);
             if self.cursor_pos.1 != 0 {
                 self.move_cursor_to(second_line_cursor_pos, self.cursor_pos.1);
@@ -218,23 +249,23 @@ impl Editor {
         } else {
             self.pop_char();
         }
-        self.buffer.has_changes = true;
+        self.open_buffers[self.current_index].has_changes = true;
     }
 
     fn remove_empty_line(&mut self, index: usize) {
-        if self.buffer.lines.len() == 1 {
+        if self.open_buffers[self.current_index].lines.len() == 1 {
             // We only have 1 empty line, we want to keep ip for a bit
             log::info!("Trying to remove the last line");
             return;
         }
         log::info!("removing empty line");
-        self.buffer.lines.remove(index);
+        self.open_buffers[self.current_index].lines.remove(index);
         self.move_cursor_up(1);
-        self.buffer.has_changes = true;
+        self.open_buffers[self.current_index].has_changes = true;
     }
 
     pub fn pop_char(&mut self) {
-        let line = &mut self.buffer.lines[self.cursor_pos.1];
+        let line = &mut self.open_buffers[self.current_index].lines[self.cursor_pos.1];
         if line.len() == 0 {
             return self.remove_empty_line(self.cursor_pos.1);
         }
@@ -259,7 +290,7 @@ impl Editor {
                 );
             }
         }
-        self.buffer.has_changes = true;
+        self.open_buffers[self.current_index].has_changes = true;
     }
 
     pub fn move_cursor_left(&mut self, amount: usize) -> MoveInfo {
@@ -284,7 +315,7 @@ impl Editor {
             true => 0,
             false => 1,
         };
-        let n = self.buffer.lines[self.cursor_pos.1]
+        let n = self.open_buffers[self.current_index].lines[self.cursor_pos.1]
             .chars()
             .count()
             .saturating_sub(value_to_sub);
@@ -323,14 +354,14 @@ impl Editor {
     }
 
     fn next_line_cursor_index(&mut self, x: usize, current_y: usize, previous_y: usize) -> usize {
-        let normal_len = &self.buffer.lines[current_y].chars().count();
+        let normal_len = &self.open_buffers[self.current_index].lines[current_y].chars().count();
         let value_to_sub = match self.mode == Mode::Insert {
             //Insert mode can go a little bit out of the buffer
             true => 0,
             false => 1,
         };
         let cursor_x =
-            Self::length_with_tabs_at(&self.buffer.lines[previous_y], x, TABSTOP).saturating_sub(1);
+            Self::length_with_tabs_at(&self.open_buffers[self.current_index].lines[previous_y], x, TABSTOP).saturating_sub(1);
 
         // We need to find the shiftwidth on the cursor_x on the line below us so we can shift
         // accordingly, this is because a line under can have any arbitrary number of \t on any
@@ -338,7 +369,7 @@ impl Editor {
         // differently to vscode and vim but its fine I think
         let mut shiftwidth = 0;
         let mut i = 0;
-        for c in self.buffer.lines[current_y].chars() {
+        for c in self.open_buffers[self.current_index].lines[current_y].chars() {
             if c == '\t' {
                 let add = Self::get_spaces_till_next_tab(i + shiftwidth, TABSTOP).saturating_sub(1);
                 shiftwidth += add;
@@ -356,7 +387,7 @@ impl Editor {
         let previous_y = self.cursor_pos.1;
         self.move_cursor_to(
             self.cursor_pos.0,
-            std::cmp::min(self.cursor_pos.1 + amount, self.buffer.lines.len() - 1),
+            std::cmp::min(self.cursor_pos.1 + amount, self.open_buffers[self.current_index].lines.len() - 1),
         );
         if self.cursor_pos.1 != previous_y {
             // If we are not in the very last line
@@ -391,18 +422,18 @@ impl Editor {
         if first_line == second_line {
             return;
         };
-        let mut first_string = self.buffer.lines[first_line].to_string();
-        first_string.push_str(self.buffer.lines[second_line].as_str());
+        let mut first_string = self.open_buffers[self.current_index].lines[first_line].to_string();
+        first_string.push_str(self.open_buffers[self.current_index].lines[second_line].as_str());
 
-        self.buffer.lines[first_line] = first_string;
-        self.buffer.lines.remove(second_line);
-        self.buffer.has_changes = true;
+        self.open_buffers[self.current_index].lines[first_line] = first_string;
+        self.open_buffers[self.current_index].lines.remove(second_line);
+        self.open_buffers[self.current_index].has_changes = true;
     }
 
     pub fn move_to(&mut self, c: char, amount: usize, offset: usize) -> MoveInfo {
         let start = self.cursor_pos;
         let mut n = amount;
-        let curr_line = &self.buffer.lines[self.cursor_pos.1];
+        let curr_line = &self.open_buffers[self.current_index].lines[self.cursor_pos.1];
         let mut skip_amount = 0;
         for (i, char) in curr_line.chars().skip(self.cursor_pos.0 + 1).enumerate() {
             if n == 0 {
@@ -433,11 +464,11 @@ impl Editor {
         };
         let mut n = amount;
         // This would be more efficient if we didn't have a Vec<String> but whatever
-        while loop_y < self.buffer.lines.len() {
+        while loop_y < self.open_buffers[self.current_index].lines.len() {
             //Handle line_start
             if loop_x == 0
                 && loop_y != self.cursor_pos.1
-                && self.buffer.lines[loop_y]
+                && self.open_buffers[self.current_index].lines[loop_y]
                     .chars()
                     .next()
                     .map_or(false, |c| !is_seperator(c))
@@ -453,14 +484,14 @@ impl Editor {
                     return result;
                 }
             }
-            let f = self.buffer.lines[loop_y]
+            let f = self.open_buffers[self.current_index].lines[loop_y]
                 .chars()
                 .skip(loop_x)
                 .enumerate()
                 .find(|c| is_seperator(c.1));
             if let Some(found) = f {
                 //Found first but now we gotta keep consuming the whitespace
-                let consumed = self.buffer.lines[loop_y]
+                let consumed = self.open_buffers[self.current_index].lines[loop_y]
                     .chars()
                     .skip(loop_x + found.0 + 1)
                     .take_while(|c| is_seperator(*c))
@@ -480,9 +511,9 @@ impl Editor {
                 loop_x += to_skip;
                 continue;
             } else {
-                if loop_y == self.buffer.lines.len() - 1 {
+                if loop_y == self.open_buffers[self.current_index].lines.len() - 1 {
                     // meaning we are in the last line
-                    let new_x = self.buffer.lines[self.buffer.lines.len().saturating_sub(1)]
+                    let new_x = self.open_buffers[self.current_index].lines[self.open_buffers[self.current_index].lines.len().saturating_sub(1)]
                         .chars()
                         .count()
                         .saturating_sub(1);
@@ -511,15 +542,15 @@ impl Editor {
         };
         let mut n = amount;
         // This would be more efficient if we didn't have a Vec<String> but whatever
-        while loop_y < self.buffer.lines.len() {
-            let f = self.buffer.lines[loop_y]
+        while loop_y < self.open_buffers[self.current_index].lines.len() {
+            let f = self.open_buffers[self.current_index].lines[loop_y]
                 .chars()
                 .skip(loop_x)
                 .enumerate()
                 .find(|c| !is_seperator(c.1));
             if let Some(found) = f {
                 //Found first but now we gotta keep consuming the whitespace
-                let consumed = self.buffer.lines[loop_y]
+                let consumed = self.open_buffers[self.current_index].lines[loop_y]
                     .chars()
                     .skip(loop_x + found.0 + 1)
                     .take_while(|c| !is_seperator(*c))
@@ -556,9 +587,9 @@ impl Editor {
         };
         let mut n = amount;
         // This would be more efficient if we didn't have a Vec<String> but whatever
-        let mut len = self.buffer.lines[loop_y].chars().count();
+        let mut len = self.open_buffers[self.current_index].lines[loop_y].chars().count();
         loop {
-            let f = self.buffer.lines[loop_y]
+            let f = self.open_buffers[self.current_index].lines[loop_y]
                 .chars()
                 .rev()
                 .skip(len.saturating_sub(loop_x))
@@ -566,7 +597,7 @@ impl Editor {
                 .find(|c| !is_seperator(c.1));
             if let Some(found) = f {
                 //Found first but now we gotta keep consuming the whitespace
-                let consumed = self.buffer.lines[loop_y]
+                let consumed = self.open_buffers[self.current_index].lines[loop_y]
                     .chars()
                     .rev()
                     .skip(len.saturating_sub(loop_x + found.0))
@@ -601,7 +632,7 @@ impl Editor {
             }
             if let Some(y) = loop_y.checked_sub(1) {
                 loop_y = y;
-                len = self.buffer.lines[y].chars().count(); // This ensures we skip nothing when len - loop_x is done, its a hack
+                len = self.open_buffers[self.current_index].lines[y].chars().count(); // This ensures we skip nothing when len - loop_x is done, its a hack
                 loop_x = len;
             } else {
                 break;
@@ -619,17 +650,17 @@ impl Editor {
         // We just delete from start_x to end_x if it doesn't span any lines
         if start_y == end_y {
             let mut s = String::new();
-            for (i, c) in self.buffer.lines[start_y].chars().enumerate() {
+            for (i, c) in self.open_buffers[self.current_index].lines[start_y].chars().enumerate() {
                 if !(i >= start_x && i <= end_x) {
                     s.push(c);
                 }
             }
             if s.len() == 0 {
-                self.buffer.lines.remove(start_y);
+                self.open_buffers[self.current_index].lines.remove(start_y);
                 // self.cursor_pos.1 = self.cursor_pos.1.saturating_sub(1);
                 self.move_cursor_to(self.cursor_pos.0, self.cursor_pos.1.saturating_sub(1));
             } else {
-                self.buffer.lines[start_y] = s;
+                self.open_buffers[self.current_index].lines[start_y] = s;
             }
             return;
         }
@@ -642,7 +673,7 @@ impl Editor {
         //We gotta delete the beggining
         {
             let mut s = String::new();
-            for (i, c) in self.buffer.lines[start_y].chars().enumerate() {
+            for (i, c) in self.open_buffers[self.current_index].lines[start_y].chars().enumerate() {
                 if !(i >= start_x) {
                     s.push(c);
                 }
@@ -651,13 +682,13 @@ impl Editor {
             //     remove_indices.push(start_y);
             // }
             // else{
-            self.buffer.lines[start_y] = s;
+            self.open_buffers[self.current_index].lines[start_y] = s;
             // }
         }
 
         {
             let mut s = String::new();
-            for (i, c) in self.buffer.lines[end_y].chars().enumerate() {
+            for (i, c) in self.open_buffers[self.current_index].lines[end_y].chars().enumerate() {
                 if !(i <= end_x) {
                     s.push(c);
                 }
@@ -666,7 +697,7 @@ impl Editor {
             //     remove_indices.push(end_y);
             // }
             // else{
-            self.buffer.lines[end_y] = s;
+            self.open_buffers[self.current_index].lines[end_y] = s;
             // }
         }
 
@@ -683,25 +714,26 @@ impl Editor {
             self.cursor_pos.1.saturating_sub(remove_indices.len()),
         );
         for i in remove_indices {
-            self.buffer.lines.remove(i);
+            self.open_buffers[self.current_index].lines.remove(i);
         }
 
         //now we gotta join the start and end lines
-        let last_line = self.buffer.lines[start_y + 1].clone();
-        self.buffer.lines[start_y].push_str(&last_line);
-        self.buffer.lines.remove(start_y + 1);
+        let last_line = self.open_buffers[self.current_index].lines[start_y + 1].clone();
+        self.open_buffers[self.current_index].lines[start_y].push_str(&last_line);
+        self.open_buffers[self.current_index].lines.remove(start_y + 1);
 
-        if self.buffer.lines[start_y].len() == 0 && self.buffer.lines.len() > 1 {
-            self.buffer.lines.remove(start_y);
+        if self.open_buffers[self.current_index].lines[start_y].len() == 0 && self.open_buffers[self.current_index].lines.len() > 1 {
+            self.open_buffers[self.current_index].lines.remove(start_y);
         }
     }
 
     pub fn move_cursor_to(&mut self, x: usize, y: usize) {
         // let to_sub = if matches!(self.mode, Mode::Insert) { 0} else {1};
-        // self.cursor_pos.1 = std::cmp::min(y, self.buffer.lines.len().saturating_sub(1));
-        // self.cursor_pos.0  = std::cmp::min(x, self.buffer.lines[self.cursor_pos.1].chars().count().saturating_sub(to_sub));
+        // self.cursor_pos.1 = std::cmp::min(y, self.open_buffers[self.current_index].lines.len().saturating_sub(1));
+        // self.cursor_pos.0  = std::cmp::min(x, self.open_buffers[self.current_index].lines[self.cursor_pos.1].chars().count().saturating_sub(to_sub));
         self.cursor_pos.0 = x;
-        self.cursor_pos.1 = y;
+        // self.cursor_pos.1 = y;
+        self.cursor_pos.1 = std::cmp::min(y,self.curr_buffer().lines.len().saturating_sub(1));
         if self.mode == Mode::Visual {
             if let Some(select) = &self.curr_selection {
                 log::info!(
@@ -726,7 +758,7 @@ impl Editor {
     }
 
     pub fn character_at_cursor(&self) -> char {
-        self.buffer.lines[self.cursor_pos.1]
+        self.open_buffers[self.current_index].lines[self.cursor_pos.1]
             .chars()
             .skip(self.cursor_pos.0)
             .next()
@@ -739,12 +771,12 @@ impl Editor {
 
         let num_lines = m.end_pos.1.saturating_sub(start_y) + 1;
         for _ in 0..num_lines {
-            if self.buffer.lines.len() == 1 {
+            if self.open_buffers[self.current_index].lines.len() == 1 {
                 // We have deleted essentially everything
-                self.buffer.lines[0] = String::new();
+                self.open_buffers[self.current_index].lines[0] = String::new();
                 break;
             }
-            self.buffer.lines.remove(start_y);
+            self.open_buffers[self.current_index].lines.remove(start_y);
         }
     }
 
@@ -780,7 +812,7 @@ impl Editor {
 
     pub fn move_to_end(&mut self) -> MoveInfo {
         let start_pos = self.cursor_pos;
-        let new_x = self.buffer.lines[self.cursor_pos.1].chars().count() - 1;
+        let new_x = self.open_buffers[self.current_index].lines[self.cursor_pos.1].chars().count() - 1;
         self.move_cursor_to(new_x, self.cursor_pos.1);
         self.latest_x = Some(new_x);
         MoveInfo {
@@ -801,9 +833,9 @@ impl Editor {
         let take_amount = if start_y == end_y {
             end_x - start_x
         } else {
-            self.buffer.lines[start_y].chars().count() - start_x
+            self.open_buffers[self.current_index].lines[start_y].chars().count() - start_x
         };
-        let content = self.buffer.lines[start_y]
+        let content = self.open_buffers[self.current_index].lines[start_y]
             .chars()
             .skip(start_x)
             .take(take_amount)
@@ -814,17 +846,17 @@ impl Editor {
 
         for i in 1..num_lines {
             log::info!("What");
-            result.push(self.buffer.lines[start_y + i].as_str());
+            result.push(self.open_buffers[self.current_index].lines[start_y + i].as_str());
         }
 
         //if our start_y and end_y are differents we need to take the remainder of the string as
         //well
         let remainder;
         if start_y != end_y {
-            let len = self.buffer.lines[end_y].chars().count();
+            let len = self.open_buffers[self.current_index].lines[end_y].chars().count();
             let take_amount = if end_x == len - 1 { len } else { end_x };
             m.end_pos.1 = take_amount.clone();
-            remainder = self.buffer.lines[end_y]
+            remainder = self.open_buffers[self.current_index].lines[end_y]
                 .chars()
                 .take(take_amount)
                 .collect::<String>();
@@ -841,7 +873,7 @@ impl Editor {
         let num_lines = m.end_pos.1.saturating_sub(start_y) + 1;
         let mut contents = Vec::new();
         for i in 0..num_lines {
-            contents.push(self.buffer.lines[start_y + i].as_str());
+            contents.push(self.open_buffers[self.current_index].lines[start_y + i].as_str());
         }
 
         let mut clipboard_contents = contents.join("\n");
@@ -849,7 +881,7 @@ impl Editor {
         self.clipboard.set_contents(clipboard_contents).unwrap();
         MoveInfo {
             start_pos : (0,m.start_pos.1),
-            end_pos: (self.buffer.lines[start_y + num_lines.saturating_sub(1)].chars().count(), start_y + num_lines.saturating_sub(1))
+            end_pos: (self.open_buffers[self.current_index].lines[start_y + num_lines.saturating_sub(1)].chars().count(), start_y + num_lines.saturating_sub(1))
         }
     }
 
@@ -863,7 +895,7 @@ impl Editor {
             .collect();
 
         let mut new_lines = Vec::new();
-        for (i, str) in self.buffer.lines.iter().enumerate() {
+        for (i, str) in self.open_buffers[self.current_index].lines.iter().enumerate() {
             if i == self.cursor_pos.1 {
                 new_lines.push(str.to_string());
                 for s in split.as_slice().iter().take(split.len() - 1) {
@@ -873,7 +905,7 @@ impl Editor {
                 new_lines.push(str.to_string());
             }
         }
-        self.buffer.lines = new_lines;
+        self.open_buffers[self.current_index].lines = new_lines;
         self.cursor_pos.1 += 1;
     }
 
@@ -889,7 +921,7 @@ impl Editor {
         }
 
         let binding_len = binding.chars().count();
-        let mut copy = self.buffer.lines[self.cursor_pos.1].clone();
+        let mut copy = self.open_buffers[self.current_index].lines[self.cursor_pos.1].clone();
         copy.insert_str(
             std::cmp::min(self.cursor_pos.0 + 1, copy.chars().count()),
             &binding,
@@ -897,17 +929,17 @@ impl Editor {
 
         let split = copy.split('\n');
 
-        let len = self.buffer.lines.len();
+        let len = self.open_buffers[self.current_index].lines.len();
         let mut save = 0;
         for (i, str) in split.enumerate() {
             if i == 0 {
-                self.buffer.lines[self.cursor_pos.1 + i] = str.to_string();
+                self.open_buffers[self.current_index].lines[self.cursor_pos.1 + i] = str.to_string();
             } else if self.cursor_pos.1 + i < len {
-                self.buffer
+                self.open_buffers[self.current_index]
                     .lines
                     .insert(self.cursor_pos.1 + i, str.to_string());
             } else {
-                self.buffer.lines.push(str.to_string());
+                self.open_buffers[self.current_index].lines.push(str.to_string());
             }
             save = i;
         }
@@ -916,5 +948,9 @@ impl Editor {
         if save == 0 {
             self.move_cursor_to(self.cursor_pos.0 + binding_len, self.cursor_pos.1);
         }
+    }
+
+    pub fn close_current_buffer(&mut self) {
+        todo!();
     }
 }

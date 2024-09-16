@@ -2,18 +2,22 @@ use crossterm::style::{Attribute, Attributes, Color, ContentStyle};
 
 use crate::editor::Mode;
 
-pub const BLACK: Color = Color::Rgb{r:18,b:18,g:18};
+pub const BLACK: Color = Color::Rgb {
+    r: 18,
+    b: 18,
+    g: 18,
+};
 
-pub fn default_text_style(is_current:bool) -> ContentStyle {
+pub fn default_text_style(is_current: bool) -> ContentStyle {
     let attr = Attributes::default();
     // attr.set(Attribute::Reset);
     let bg = match is_current {
-        true => Some(Color::Rgb{
+        true => Some(Color::Rgb {
             r: 60,
             g: 60,
             b: 60,
         }),
-        false => Some(BLACK)
+        false => Some(BLACK),
     };
     ContentStyle {
         foreground_color: Some(Color::Rgb {
@@ -36,7 +40,7 @@ pub fn highlighted_text() -> ContentStyle {
             g: 215,
             b: 215,
         }),
-        background_color: Some(Color::Rgb{
+        background_color: Some(Color::Rgb {
             r: 41,
             g: 120,
             b: 255,
@@ -55,7 +59,7 @@ pub fn yank_highlighted_text() -> ContentStyle {
             g: 215,
             b: 215,
         }),
-        background_color: Some(Color::Rgb{
+        background_color: Some(Color::Rgb {
             r: 255,
             g: 120,
             b: 255,
@@ -69,7 +73,7 @@ pub fn default_line_number_style(is_current: bool) -> ContentStyle {
     let attr = Attributes::default();
     // attr.set(Attribute::Reset);
     let fg: Option<Color> = match is_current {
-        true => Some(Color::Rgb{
+        true => Some(Color::Rgb {
             r: 100,
             g: 149,
             b: 171,
@@ -79,10 +83,9 @@ pub fn default_line_number_style(is_current: bool) -> ContentStyle {
             g: 50,
             b: 50,
         }),
-
     };
     ContentStyle {
-        foreground_color: fg,        
+        foreground_color: fg,
         background_color: Some(BLACK),
         underline_color: None,
         attributes: attr,
@@ -118,6 +121,21 @@ pub fn gutter_style(mode: &Mode) -> ContentStyle {
     }
 }
 
+pub fn command_style() -> ContentStyle {
+    let mut attr = Attributes::default();
+    // attr.set(Attribute::Reset);
+    attr.set(Attribute::Bold);
+    ContentStyle {
+        foreground_color: Some(Color::Rgb {
+            r: 100,
+            g: 149,
+            b: 171,
+        }),
+        background_color: Some(BLACK),
+        underline_color: None,
+        attributes: attr,
+    }
+}
 pub fn mode_style(mode: &Mode) -> ContentStyle {
     let mut attr = Attributes::default();
     attr.set(Attribute::Bold);

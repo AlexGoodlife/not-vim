@@ -11,6 +11,7 @@ pub mod client;
 pub mod editor;
 pub mod styles;
 pub mod ui;
+pub mod util;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
