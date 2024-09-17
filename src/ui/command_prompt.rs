@@ -20,9 +20,13 @@ impl Component for CommandPrompt {
     fn update_cursor(&mut self, _editor: &mut crate::editor::Editor) -> (i64, i64) {
         let prompt_x = self.prompt.get_cursor();
 
-        if prompt_x >= self.viewport.width.saturating_sub(self.right_offset) + self.side_scroll - self.left_offset {
-            self.side_scroll +=
-                prompt_x - (self.viewport.width.saturating_sub(self.right_offset) + self.side_scroll - self.left_offset)
+        if prompt_x
+            >= self.viewport.width.saturating_sub(self.right_offset) + self.side_scroll
+                - self.left_offset
+        {
+            self.side_scroll += prompt_x
+                - (self.viewport.width.saturating_sub(self.right_offset) + self.side_scroll
+                    - self.left_offset)
         }
 
         if prompt_x < self.side_scroll + self.left_offset {
@@ -32,7 +36,7 @@ impl Component for CommandPrompt {
         }
         (
             (self.left_offset + prompt_x).saturating_sub(self.side_scroll) as i64,
-            (self.viewport.height/2) as i64,
+            (self.viewport.height / 2) as i64,
         )
     }
 
@@ -51,37 +55,42 @@ impl Component for CommandPrompt {
         let vec_len = vec.len();
 
         for i in 0..h {
-            buffer.put_cells(&vec, (0,i as i64), &self.viewport);
+            buffer.put_cells(&vec, (0, i as i64), &self.viewport);
         }
 
-        for i in 0..w{
+        for i in 0..w {
             vec[i] = Cell::with_style('─', command_style())
         }
         vec[0] = Cell::with_style('┌', command_style());
-        vec[vec_len-1] = Cell::with_style('┐', command_style());
+        vec[vec_len - 1] = Cell::with_style('┐', command_style());
 
-        buffer.put_cells(&vec, (0,0 ), &self.viewport);
+        buffer.put_cells(&vec, (0, 0), &self.viewport);
 
         for i in 0..w {
-            vec[i]= Cell::with_style(' ', command_style());
+            vec[i] = Cell::with_style(' ', command_style());
         }
 
         let content = self.prompt.get_content();
         //Draw the text in the box
-        for (i, c) in content.chars().skip(self.side_scroll).take(vec.len() - (self.right_offset + self.left_offset)).enumerate() {
+        for (i, c) in content
+            .chars()
+            .skip(self.side_scroll)
+            .take(vec.len() - (self.right_offset + self.left_offset))
+            .enumerate()
+        {
             vec[i + self.left_offset] = Cell::with_style(c, default_text_style(false));
         }
         vec[0] = Cell::with_style('│', command_style());
-        vec[std::cmp::min(vec_len-1, 1)] = Cell::with_style('>', command_style());
-        vec[vec_len-1] = Cell::with_style('│', command_style());
-        buffer.put_cells(&vec, (0,(h/2) as i64), &self.viewport);
+        vec[std::cmp::min(vec_len - 1, 1)] = Cell::with_style('>', command_style());
+        vec[vec_len - 1] = Cell::with_style('│', command_style());
+        buffer.put_cells(&vec, (0, (h / 2) as i64), &self.viewport);
 
         for i in 0..w {
             vec[i] = Cell::with_style('─', command_style());
         }
         vec[0] = Cell::with_style('└', command_style());
-        vec[vec_len-1] = Cell::with_style('┘', command_style());
-        buffer.put_cells(&vec, (0,(h-1) as i64), &self.viewport);
+        vec[vec_len - 1] = Cell::with_style('┘', command_style());
+        buffer.put_cells(&vec, (0, (h - 1) as i64), &self.viewport);
     }
 
     fn get_viewport(&self) -> &Viewport {
@@ -141,7 +150,12 @@ impl Component for CommandPrompt {
                     modifiers: KeyModifiers::NONE,
                     kind: KeyEventKind::Press,
                     state: KeyEventState::NONE,
-                } => return Ok((true, CommandPrompt::process_command(self.prompt.get_content()))),
+                } => {
+                    return Ok((
+                        true,
+                        CommandPrompt::process_command(self.prompt.get_content()),
+                    ))
+                }
                 KeyEvent {
                     code: KeyCode::Esc,
                     modifiers: KeyModifiers::NONE,
@@ -175,9 +189,26 @@ impl CommandPrompt {
     pub fn process_command(raw_string: &str) -> ClientAction {
         let argv: Vec<&str> = raw_string.split_whitespace().collect();
         match argv[0] {
-           "q" => ClientAction::Quit,
-            _ => ClientAction::None
+            "q" => ClientAction::Quit,
+            "w" => ClientAction::SaveCurrentBuffer,
+            "wq" => {
+                ClientAction::Multiple(vec![ClientAction::SaveCurrentBuffer, ClientAction::Quit])
+            }
+            "e" => {
+                let result;
+                if argv.len() <= 1 {
+                    result = ClientAction::OpenBuffer("".to_string())
+                }
+                else{
+                    result = ClientAction::OpenBuffer(argv[1].to_string())
+                }
+                result
+
+            },
+            "bclose" | "bc" => ClientAction::CloseBuffer,
+            "bnext" | "bn" => ClientAction::NextBuffer,
+            "bprev" | "bp" => ClientAction::PreviousBuffer,
+            _ => ClientAction::None,
         }
     }
-
 }

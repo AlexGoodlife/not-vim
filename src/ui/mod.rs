@@ -32,6 +32,7 @@ pub enum ClientAction {
     NextBuffer,
     PreviousBuffer,
     OpenCommandPrompt,
+    Multiple(Vec<ClientAction>),
 }
 
 //Perfect place for a Macro to generate new methods for me, split the resize stuff into a seperate

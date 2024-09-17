@@ -1,7 +1,7 @@
 use crate::editor::buffer::Viewport;
 use crate::editor::Editor;
-use crate::ui::edit_buffer::EditorBuffer;
 use crate::ui::command_prompt::CommandPrompt;
+use crate::ui::edit_buffer::EditorBuffer;
 use crate::ui::ClientAction;
 use crate::ui::Component;
 use crate::ui::Gutter;
@@ -59,7 +59,7 @@ impl Client {
             editor: Editor::new(),
             ui_components: Vec::new(),
             active_compontent_index: 0,
-            window_dimensions: (w,h)
+            window_dimensions: (w, h),
         };
         let messages_viewport = Viewport {
             pos: (0, h.saturating_sub(1)),
@@ -146,7 +146,7 @@ impl Client {
 
     fn update_components(&mut self) {
         let (new_x, new_y) =
-        self.ui_components[self.active_compontent_index].update_cursor(&mut self.editor);
+            self.ui_components[self.active_compontent_index].update_cursor(&mut self.editor);
         for c in self.ui_components.iter_mut() {
             c.draw(&mut self.next_buffer, &mut self.editor)
         }
@@ -154,8 +154,16 @@ impl Client {
         let (viewport_x, viewport_y) = current_component.get_viewport().pos;
 
         // clamp this
-        let clamped_x = clamp(viewport_x as i64 + new_x as i64, 0, self.window_dimensions.0 as i64);
-        let clamped_y = clamp(viewport_y as i64 + new_y as i64, 0, self.window_dimensions.1 as i64);
+        let clamped_x = clamp(
+            viewport_x as i64 + new_x as i64,
+            0,
+            self.window_dimensions.0 as i64,
+        );
+        let clamped_y = clamp(
+            viewport_y as i64 + new_y as i64,
+            0,
+            self.window_dimensions.1 as i64,
+        );
         self.cursor_pos.0 = clamped_x as u16;
         self.cursor_pos.1 = clamped_y as u16;
     }
@@ -182,7 +190,7 @@ impl Client {
                 state: KeyEventState::NONE,
             } => {
                 self.quit = true;
-            },
+            }
             _ => {}
         }
         Ok(())
@@ -210,19 +218,19 @@ impl Client {
                 _ => println!("Some other event"),
             }
             let curr_component = &mut self.ui_components[self.active_compontent_index];
-            let (quit, action) = curr_component.handle_events(
-                &mut self.stdout,
-                &mut self.editor,
-                event,
-            )?;
+            let (quit, action) =
+                curr_component.handle_events(&mut self.stdout, &mut self.editor, event)?;
             self.match_client_actions(action)?;
             if quit {
                 self.ui_components.remove(self.active_compontent_index);
-                let new_component = self.ui_components.iter().enumerate().find(|(_,c)| c.is_interactive());
+                let new_component = self
+                    .ui_components
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.is_interactive());
                 if let Some(c) = new_component {
                     self.active_compontent_index = c.0;
-                }
-                else {
+                } else {
                     self.quit = true; // No interactive components found, we will quit the program
                 }
             }
@@ -230,36 +238,40 @@ impl Client {
         Ok(())
     }
 
-    fn match_client_actions(&mut self, action : ClientAction) -> anyhow::Result<()>{
+    fn match_client_actions(&mut self, action: ClientAction) -> anyhow::Result<()> {
         match action {
-            ClientAction::None => {},
+            ClientAction::None => {}
             ClientAction::OpenBuffer(path) => self.editor.open_file(&path)?,
             ClientAction::SaveCurrentBuffer => self.editor.write_current_buffer()?,
             ClientAction::CloseBuffer => self.editor.close_current_buffer(),
-            ClientAction::NextBuffer => todo!(),
-            ClientAction::PreviousBuffer => todo!(),
+            ClientAction::NextBuffer => self.editor.next_buffer(),
+            ClientAction::PreviousBuffer => self.editor.prev_buffer(),
             ClientAction::Quit => self.quit = true,
             ClientAction::OpenCommandPrompt => {
                 self.ui_components.push(Box::new(CommandPrompt::new(
-                    Viewport{
-                        pos : (self.window_dimensions.0/2 - self.window_dimensions.0/4/2,
-                        self.window_dimensions.1/2 - self.window_dimensions.1/4/2),
-                       height: std::cmp::min(3,self.window_dimensions.1 / 4 ),
-                       width: self.window_dimensions.0 / 4 ,
+                    Viewport {
+                        pos: (
+                            self.window_dimensions.0 / 2 - self.window_dimensions.0 / 4 / 2,
+                            self.window_dimensions.1 / 2 - self.window_dimensions.1 / 4 / 2,
+                        ),
+                        height: std::cmp::min(3, self.window_dimensions.1 / 4),
+                        width: self.window_dimensions.0 / 4,
                     },
-                    Box::new(|w,h| {
-                        Viewport {
-                            pos: (w/2 - w/4/2, h/2 - h/4/2),
-                            height: std::cmp::min(3,h/ 4 ),
-                            width: w/4,
-                        }
-                    })
+                    Box::new(|w, h| Viewport {
+                        pos: (w / 2 - w / 4 / 2, h / 2 - h / 4 / 2),
+                        height: std::cmp::min(3, h / 4),
+                        width: w / 4,
+                    }),
                 )));
                 self.active_compontent_index = self.ui_components.len() - 1;
             }
+            ClientAction::Multiple(actions) => {
+                for action in actions {
+                    self.match_client_actions(action)?;
+                }
+            }
         }
         Ok(())
-
     }
 }
 

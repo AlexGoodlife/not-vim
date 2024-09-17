@@ -41,9 +41,9 @@ fn main() {
         dimensions.0,
         dimensions.1
     );
-    let _ = client
-        .editor
-        .open_file(file_path)
-        .map_err(|err| println!("Couldn't open file{err}"));
+    // let _ = client
+    //     .editor
+    //     .open_file(file_path)
+    //     .map_err(|err| println!("Couldn't open file{err}"));
     let _ = client.run().map_err(|err| log::error!("{err}"));
 }
