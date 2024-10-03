@@ -189,12 +189,12 @@ impl CommandPrompt {
     pub fn process_command(raw_string: &str) -> ClientAction {
         let argv: Vec<&str> = raw_string.split_whitespace().collect();
         match argv[0] {
-            "q" => ClientAction::Quit,
-            "w" => ClientAction::SaveCurrentBuffer,
+            "quit" | "q" => ClientAction::Quit,
+            "write" | "w" => ClientAction::SaveCurrentBuffer,
             "wq" => {
                 ClientAction::Multiple(vec![ClientAction::SaveCurrentBuffer, ClientAction::Quit])
             }
-            "e" => {
+            "edit" | "e" => {
                 let result;
                 if argv.len() <= 1 {
                     result = ClientAction::OpenBuffer("".to_string())

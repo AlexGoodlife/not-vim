@@ -187,6 +187,7 @@ impl Editor {
                 // meaning there is only 1 buffer
                 if self.has_empty &&  self.open_buffers.len() == 1 && !self.curr_buffer().has_changes{
                     self.open_buffers.pop(); // we dont want the empty buffer 
+                    self.has_empty = false
                 }
                 self.open_buffers.push(TextBufferInfo{buffer: buff, cursor_pos: (0,0)});
                 self.cursor_pos = (0,0);
@@ -429,7 +430,7 @@ impl Editor {
         self.move_cursor_to(
             self.cursor_pos.0,
             std::cmp::min(
-                self.cursor_pos.1 + amount,
+                self.cursor_pos.1.saturating_add(amount),
                 self.open_buffers[self.current_index].buffer.lines.len() - 1,
             ),
         );
@@ -1073,6 +1074,7 @@ impl Editor {
         //if we close the last buffer we should open an unamed one
         if self.open_buffers.len() == 0 {
             self.open_buffers.push(TextBufferInfo{buffer:TextBuffer::empty(), cursor_pos: (0,0)});
+            self.has_empty = true
         }
         self.cursor_pos = self.open_buffers[self.current_index].cursor_pos;
     }

@@ -39,6 +39,7 @@ enum Action {
     MoveEndWord,
     MoveBackWord,
     PopChar,
+    GoToEndOfFile,
     PopBackspace,
     PutNewlineInsert,
     WriteCurrentBuffer,
@@ -148,7 +149,13 @@ impl EditorBuffer {
             default_text_style(true),
             &self.viewport,
         );
-        for (i, line) in editor.curr_buffer().lines.iter().skip(self.top_index).enumerate() {
+        for (i, line) in editor
+            .curr_buffer()
+            .lines
+            .iter()
+            .skip(self.top_index)
+            .enumerate()
+        {
             if i >= self.viewport.height as usize {
                 break;
             }
@@ -183,7 +190,7 @@ impl EditorBuffer {
                             default_text_style(i + self.top_index == editor.cursor_pos.1)
                         }
                     }
-                    None => style
+                    None => style,
                 };
 
                 if c == '\t' {
@@ -202,13 +209,23 @@ impl EditorBuffer {
                 .into_iter()
                 .skip(self.side_scroll)
                 .collect::<Vec<Cell>>();
-            render_buffer.put_cells(&skipped, (self.left_offset as i64, i as i64), &self.viewport);
+            render_buffer.put_cells(
+                &skipped,
+                (self.left_offset as i64, i as i64),
+                &self.viewport,
+            );
         }
     }
 
     fn draw_line_numbers(&mut self, render_buffer: &mut RenderBuffer, editor: &mut Editor) {
         self.left_offset = editor.curr_buffer().lines.len().to_string().chars().count() + 3; //  3 extra for '|' and a  2 spaces
-        for (i, _line) in editor.curr_buffer().lines.iter().skip(self.top_index).enumerate() {
+        for (i, _line) in editor
+            .curr_buffer()
+            .lines
+            .iter()
+            .skip(self.top_index)
+            .enumerate()
+        {
             if i >= self.viewport.height as usize {
                 break;
             }
@@ -322,10 +339,10 @@ impl EditorBuffer {
                 editor.switch_mode(mode.clone());
                 None
             }
-            Action::WriteCurrentBuffer => { // writing current buffer is going to be a client
+            Action::WriteCurrentBuffer => {
+                // writing current buffer is going to be a client
                 // action not a editor action
-                let _ = editor
-                    .write_current_buffer();
+                let _ = editor.write_current_buffer();
                 None
             }
             Action::DeleteVisualMode => {
@@ -358,6 +375,10 @@ impl EditorBuffer {
                 editor.move_to_end();
                 editor.switch_mode(Mode::Insert);
                 editor.move_cursor_right(1);
+                None
+            }
+            Action::GoToEndOfFile => {
+                editor.move_cursor_down(std::usize::MAX);
                 None
             }
         }
@@ -595,13 +616,19 @@ impl EditorBuffer {
                 );
             }
             KeyEvent {
+                code: KeyCode::Char('G'),
+                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            } => {
+                self.handle_motions(stdout, editor, Motion::Single(Action::GoToEndOfFile));
+            }
+            KeyEvent {
                 code: KeyCode::Char(':'),
                 modifiers: KeyModifiers::NONE,
                 kind: KeyEventKind::Press,
                 state: KeyEventState::NONE,
-            } => {
-                return Ok(ClientAction::OpenCommandPrompt)
-            },
+            } => return Ok(ClientAction::OpenCommandPrompt),
             KeyEvent {
                 code: KeyCode::Char('v'),
                 modifiers: KeyModifiers::NONE,
@@ -813,7 +840,7 @@ impl EditorBuffer {
                 } else {
                     self.repeater = Some(c.to_digit(10).unwrap_or(1) as usize);
                 }
-            },
+            }
             _ => {
                 // We input something wrong, we should clear the repeater
                 self.repeater = None;
@@ -927,7 +954,7 @@ impl Component for EditorBuffer {
                 Mode::Insert => self.handle_insert_keys(&mut (*stdout), editor, ev)?,
                 Mode::Visual => self.handle_normal_keys(&mut (*stdout), editor, ev)?,
             },
-            _ => {ClientAction::None}
+            _ => ClientAction::None,
         };
         Ok((false, action))
     }

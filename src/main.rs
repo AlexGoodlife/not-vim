@@ -15,7 +15,7 @@ pub mod util;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let file_path = if args.len() < 2 { "test.txt" } else { &args[1] };
+    let file_path = if args.len() < 2 { None } else { Some(&args[1]) };
     log_to_file("editor.log", log::LevelFilter::Info).unwrap();
 
     let stdout = stdout();
@@ -41,9 +41,11 @@ fn main() {
         dimensions.0,
         dimensions.1
     );
-    // let _ = client
-    //     .editor
-    //     .open_file(file_path)
-    //     .map_err(|err| println!("Couldn't open file{err}"));
+    if let Some(file) = file_path {
+        let _ = client
+            .editor
+            .open_file(file)
+            .map_err(|err| println!("Couldn't open file{err}"));
+    }
     let _ = client.run().map_err(|err| log::error!("{err}"));
 }
